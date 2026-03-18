@@ -60,6 +60,12 @@ RADAR_LABELS  = ["CMJ", "DJ RSI", "t5", "t10", "t20", "Agility", "Dribbling", "V
 BVB_YELLOW = "#FDE000"
 COLORS = ["#FDE000", "#60A5FA", "#4ADE80", "#FB923C", "#C084FC", "#F472B6"]
 
+def hex_rgba(hex_color: str, alpha: float) -> str:
+    """Convert hex color to rgba string for Plotly compatibility."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
+
 SEED_DATA = [
     {"name":"Laura van der Laan","session":"Jan 26","dj_rsi":1.840,"cmj":29.8,"t5":1.02,"t10":1.88,"t20":3.28,"t30":4.65,"vo2max":52.53,"agility":16.07,"dribbling":10.63},
     {"name":"Mia Böger","session":"Jan 26","dj_rsi":1.817,"cmj":35.9,"t5":0.97,"t10":1.73,"t20":3.09,"t30":4.37,"vo2max":53.87,"agility":15.37,"dribbling":9.83},
@@ -360,7 +366,7 @@ def radar_chart(df: pd.DataFrame, names: list, sessions: list = None, title: str
                 r=vals_clean + [vals_clean[0]],
                 theta=RADAR_LABELS + [RADAR_LABELS[0]],
                 fill="toself",
-                fillcolor=color + "18",
+                fillcolor=hex_rgba(color, 0.1),
                 line=dict(color=color, width=2.5 if opacity == 1.0 else 1.5),
                 opacity=opacity,
                 name=label,
@@ -491,7 +497,7 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
             r=vals + [vals[0]],
             theta=RADAR_LABELS + [RADAR_LABELS[0]],
             fill="toself",
-            fillcolor=color + "18",
+            fillcolor=hex_rgba(color, 0.1),
             line=dict(color=color, width=lw),
             name=sess,
             hovertemplate="%{theta}: Z=%{r:.1f}<extra>" + sess + "</extra>",
