@@ -480,6 +480,131 @@ def comparison_bar(df: pd.DataFrame, name: str, session: str) -> go.Figure:
     return fig
 
 
+def ranked_bar_chart(df: pd.DataFrame, metric: str, sessions_to_show: list = None) -> go.Figure:
+    """
+    Ranked bar chart per metric — replicating the Säulendiagramme view.
+    Players sorted by latest session value (descending for higher-is-better,
+    ascending for lower-is-better). Team mean shown as horizontal reference lines.
+    Players who did not participate show as 0 / are excluded.
+    """
+    info = RAW_METRICS[metric]
+    all_sessions = sorted(df["session"].unique())
+    if sessions_to_show is None:
+        sessions_to_show = all_sessions[-2:] if len(all_sessions) >= 2 else all_sessions
+
+    last_sess = sessions_to_show[-1]
+
+    # Build player rows — only players who have data in at least one shown session
+    player_data = []
+    for name in sorted(df[df["cmj"].notna()]["name"].unique()):
+        row = {"name": name}
+        has_any = False
+        for sess in sessions_to_show:
+            rec = df[(df["name"] == name) & (df["session"] == sess)]
+            v = rec.iloc[0][metric] if not rec.empty and pd.notna(rec.iloc[0].get(metric)) else None
+            row[sess] = v
+            if v is not None:
+                has_any = True
+        if has_any:
+            player_data.append(row)
+
+    if not player_data:
+        return go.Figure()
+
+    pdf = pd.DataFrame(player_data)
+
+    # Sort by latest session value
+    pdf["_sort"] = pdf[last_sess].fillna(-999 if info["hib"] else 999)
+    pdf = pdf.sort_values("_sort", ascending=not info["hib"]).drop(columns="_sort")
+
+    # Compute team means (only players with real data)
+    means = {}
+    for sess in sessions_to_show:
+        col = df[(df["session"] == sess) & df[metric].notna()][metric]
+        means[sess] = col.mean() if len(col) > 0 else None
+
+    # Color palette per session
+    sess_colors = {
+        sessions_to_show[-1]: "#C0392B",   # dark red = latest (matches screenshot)
+        sessions_to_show[0]:  "#E8A0A0",   # light pink = previous
+    }
+    if len(sessions_to_show) > 2:
+        extra_colors = ["#60A5FA", "#4ADE80", "#FB923C"]
+        for i, s in enumerate(sessions_to_show[:-2]):
+            sess_colors[s] = extra_colors[i % len(extra_colors)]
+
+    fig = go.Figure()
+
+    # Bars — one group per session, in chronological order
+    for sess in sessions_to_show:
+        vals = [pdf[sess].iloc[i] if pd.notna(pdf[sess].iloc[i]) else 0
+                for i in range(len(pdf))]
+        # Replace 0 with None so bar is absent (not participated)
+        bar_vals = [v if v > 0 else None for v in vals]
+        fig.add_trace(go.Bar(
+            name=sess,
+            x=pdf["name"].tolist(),
+            y=bar_vals,
+            marker_color=sess_colors.get(sess, "#888"),
+            marker_opacity=0.85,
+            text=[f"{v:.2f}" if v else "" for v in bar_vals],
+            textposition="outside",
+            textfont=dict(size=8, color="#aaa"),
+            hovertemplate=f"<b>%{{x}}</b><br>{sess}: %{{y:.2f}} {info['unit']}<extra></extra>",
+        ))
+
+    # Mean reference lines — one per session
+    line_colors = {
+        sessions_to_show[-1]: "#000000",   # black = latest mean (matches screenshot)
+        sessions_to_show[0]:  "#888888",   # grey = previous mean
+    }
+    for sess in sessions_to_show:
+        m = means.get(sess)
+        if m is not None:
+            fig.add_hline(
+                y=m,
+                line_color=line_colors.get(sess, "#555"),
+                line_width=1.5,
+                line_dash="solid",
+                annotation_text=f"MW {sess}: {m:.2f}",
+                annotation_font_color=line_colors.get(sess, "#555"),
+                annotation_font_size=10,
+                annotation_position="right",
+            )
+
+    fig.update_layout(
+        **PLOTLY_LAYOUT,
+        barmode="group",
+        bargap=0.15,
+        bargroupgap=0.05,
+        height=460,
+        title=dict(
+            text=f"{info['label']}  <span style='font-size:13px;color:#555'>{info['unit']}</span>",
+            font=dict(color="#FDE000", size=15),
+        ),
+        xaxis=dict(
+            tickangle=-45,
+            tickfont=dict(size=10, color="#777"),
+            gridcolor="#1a1a1a",
+        ),
+        yaxis=dict(
+            tickfont=dict(size=10, color="#555"),
+            gridcolor="#1a1a1a",
+            zeroline=False,
+        ),
+        legend=dict(
+            font_color="#888",
+            bgcolor="rgba(0,0,0,0)",
+            orientation="h",
+            yanchor="bottom", y=1.02,
+            xanchor="right", x=1,
+        ),
+        plot_bgcolor="#111",
+        paper_bgcolor="#111",
+    )
+    return fig
+
+
 def team_radar_chart(df: pd.DataFrame) -> go.Figure:
     sessions = sorted(df["session"].unique())
     fig = go.Figure()
@@ -806,11 +931,12 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 # MAIN TABS
 # ─────────────────────────────────────────────
-tab_overview, tab_player, tab_compare, tab_ranking, tab_flags, tab_pdf = st.tabs([
+tab_overview, tab_player, tab_compare, tab_ranking, tab_saeulen, tab_flags, tab_pdf = st.tabs([
     "📊 Überblick",
     "👤 Spielerin",
     "⚡ Vergleich",
     "🏆 Rankings",
+    "📊 Säulendiagramme",
     "🚨 Verletzungsrisiko",
     "📄 PDF Reports",
 ])
@@ -1134,6 +1260,64 @@ with tab_ranking:
     display_cols = ["#", "name", "Metrik"] + (["Δ vs prev"] if prev_sess else [])
     rk_display = rk_df[display_cols].rename(columns={"name": "Spielerin"}).set_index("#")
     st.dataframe(rk_display, use_container_width=True, height=600)
+
+
+# ══════════════════════════════════════════════
+# SÄULENDIAGRAMME
+# ══════════════════════════════════════════════
+with tab_saeulen:
+    st.markdown("### Säulendiagramme — Ranked Bar Charts")
+    st.caption("Spielerinnen sortiert nach bestem Wert in der neuesten Session. Horizontale Linien = Mannschaftsmittelwert.")
+
+    col_s1, col_s2 = st.columns([2, 1])
+    with col_s1:
+        saeulen_sessions = st.multiselect(
+            "Sessions vergleichen",
+            sessions,
+            default=sessions[-2:] if len(sessions) >= 2 else sessions,
+            key="saeul_sess",
+        )
+    with col_s2:
+        saeulen_metric = st.selectbox(
+            "Metrik",
+            list(RAW_METRICS.keys()),
+            format_func=lambda x: RAW_METRICS[x]["label"],
+            key="saeul_met",
+        )
+
+    if not saeulen_sessions:
+        st.info("Mindestens eine Session auswählen.")
+    else:
+        st.plotly_chart(
+            ranked_bar_chart(df, saeulen_metric, saeulen_sessions),
+            use_container_width=True,
+        )
+
+        st.divider()
+        st.markdown("#### Alle Metriken auf einen Blick")
+        st.caption("Klicke eine Metrik an um den vollständigen Chart zu sehen.")
+
+        # Grid of mini charts — 2 per row
+        metrics_list = list(RAW_METRICS.keys())
+        for i in range(0, len(metrics_list), 2):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                m = metrics_list[i]
+                fig_mini = ranked_bar_chart(df, m, saeulen_sessions)
+                fig_mini.update_layout(height=320, title_font_size=12,
+                                       showlegend=False,
+                                       xaxis_tickfont_size=7,
+                                       margin=dict(l=10, r=10, t=40, b=60))
+                st.plotly_chart(fig_mini, use_container_width=True)
+            with col_b:
+                if i + 1 < len(metrics_list):
+                    m2 = metrics_list[i + 1]
+                    fig_mini2 = ranked_bar_chart(df, m2, saeulen_sessions)
+                    fig_mini2.update_layout(height=320, title_font_size=12,
+                                            showlegend=False,
+                                            xaxis_tickfont_size=7,
+                                            margin=dict(l=10, r=10, t=40, b=60))
+                    st.plotly_chart(fig_mini2, use_container_width=True)
 
 # ══════════════════════════════════════════════
 # VERLETZUNGSRISIKO
