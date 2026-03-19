@@ -599,8 +599,6 @@ def ranked_bar_chart(df: pd.DataFrame, metric: str, sessions_to_show: list = Non
             yanchor="bottom", y=1.02,
             xanchor="right", x=1,
         ),
-        plot_bgcolor="#111",
-        paper_bgcolor="#111",
     )
     return fig
 
