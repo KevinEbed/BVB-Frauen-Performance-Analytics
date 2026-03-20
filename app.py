@@ -67,34 +67,39 @@ def hex_rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({r},{g},{b},{alpha})"
 
 
-def cross_norm(df: pd.DataFrame, metric: str, sessions: list) -> list:
+# All-time historical baselines from Zusammenfassung (Jul 2023 – Mär 2026)
+# Used to anchor the team radar so sessions are comparable to real history
+ALLTIME_MEAN = {
+    "cmj": 31.780, "dj_rsi": 1.630, "t5": 1.082, "t10": 1.884,
+    "t20": 3.329,  "agility": 16.332, "dribbling": 10.331, "vo2max": 49.538,
+}
+ALLTIME_SD = {
+    "cmj": 4.160, "dj_rsi": 0.294, "t5": 0.046, "t10": 0.073,
+    "t20": 0.132, "agility": 0.663, "dribbling": 0.639, "vo2max": 4.378,
+}
+
+
+def team_radar_z(df: pd.DataFrame, metric: str, sessions: list) -> list:
     """
-    Normalise team-average raw values across sessions to a 75-128 scale
-    so the radar shows meaningful differences between sessions.
-    (Z-scores average to ~100 within each session so they can't be used here.)
+    Compute Z-scores for each session's team average relative to the
+    all-time historical mean (MW seit 2023 from Zusammenfassung).
+    This gives each session a meaningful absolute position rather than
+    collapsing all sessions to 100 (which per-session Z always does).
     """
     info = RAW_METRICS.get(metric, {})
     hib  = info.get("hib", True)
-    avgs = []
+    sign = 1 if hib else -1
+    mean = ALLTIME_MEAN.get(metric)
+    sd   = ALLTIME_SD.get(metric)
+    result = []
     for s in sessions:
         sess_df = df[(df["session"] == s) & df["cmj"].notna()]
-        v = sess_df[metric].mean() if metric in sess_df.columns else np.nan
-        avgs.append(v if pd.notna(v) else None)
-    valid = [v for v in avgs if v is not None]
-    if len(valid) < 2:
-        return [100.0] * len(sessions)
-    mn, mx = min(valid), max(valid)
-    rng = mx - mn
-    result = []
-    for v in avgs:
-        if v is None:
-            result.append(85.0)
-        elif rng == 0:
+        v = sess_df[metric].mean() if metric in sess_df.columns else None
+        if v is None or pd.isna(v) or mean is None or sd is None or sd == 0:
             result.append(100.0)
         else:
-            # best session = 128, worst = 75
-            norm = 75 + ((v - mn) / rng * 53) if hib else 75 + ((mx - v) / rng * 53)
-            result.append(round(norm, 1))
+            z = round(100 + 10 * sign * (v - mean) / sd, 1)
+            result.append(z)
     return result
 
 SEED_DATA = [
@@ -643,7 +648,7 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
         # Use crossNorm so sessions are visually distinguishable.
         # Direct Z-score averages are always ~100 (by definition of Z),
         # which makes every session draw the same circle.
-        vals = [cross_norm(df, m, sessions)[si] for m in RADAR_METRICS]
+        vals = [team_radar_z(df, m, sessions)[si] for m in RADAR_METRICS]
         # Build hover showing actual raw team averages
         sess_df = df[(df["session"] == sess) & df["cmj"].notna()]
         hover_vals = []
@@ -673,7 +678,7 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
         polar=dict(
             bgcolor="#111",
             radialaxis=dict(
-                visible=True, range=[65, 135],
+                visible=True, range=[85, 125],
                 showticklabels=False,
                 gridcolor="#222", linecolor="#2a2a2a",
             ),
