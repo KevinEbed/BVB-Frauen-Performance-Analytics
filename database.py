@@ -212,15 +212,25 @@ class BVBDatabase:
         cur  = conn.cursor()
         ph   = self._ph()
 
-        # Upsert session
-        cur.execute(
-            f"INSERT INTO sessions (label, session_date) VALUES ({ph},{ph}) "
-            f"ON CONFLICT(label) DO UPDATE SET session_date=excluded.session_date",
-            (rec["session"], rec.get("date"))
-        ) if self.use_postgres else cur.execute(
-            "INSERT OR IGNORE INTO sessions (label, session_date) VALUES (?,?)",
-            (rec["session"], rec.get("date"))
-        )
+        # Upsert session — date must be a real ISO date (YYYY-MM-DD) or None
+        # Never pass the label string as the date
+        raw_date = rec.get("date")
+        if raw_date and raw_date != rec["session"]:
+            session_date = raw_date  # only use it if it looks like a real date
+        else:
+            session_date = None  # PostgreSQL DATE column requires real date or NULL
+
+        if self.use_postgres:
+            cur.execute(
+                f"INSERT INTO sessions (label, session_date) VALUES ({ph},{ph}) "
+                f"ON CONFLICT(label) DO UPDATE SET session_date=COALESCE(excluded.session_date, sessions.session_date)",
+                (rec["session"], session_date)
+            )
+        else:
+            cur.execute(
+                "INSERT OR IGNORE INTO sessions (label, session_date) VALUES (?,?)",
+                (rec["session"], session_date)
+            )
 
         # Upsert player
         cur.execute(
@@ -321,11 +331,12 @@ class BVBDatabase:
         """
         Bulk-save a parsed DataFrame (from Excel upload) into the database.
         df must have columns: name + all metric columns.
+        session_date must be a real ISO date string (YYYY-MM-DD) or None.
         """
         for _, row in df.iterrows():
             rec = row.to_dict()
             rec["session"] = label
-            rec["date"]    = session_date or label
+            rec["date"]    = session_date  # None is fine — stored as NULL
             # Map app column names → db column names
             mapping = {
                 "cmj": "cmj_best", "dj_rsi": "dj_rsi",
