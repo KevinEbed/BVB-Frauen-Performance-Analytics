@@ -288,27 +288,8 @@ class BVBDatabase:
             if self.db_url.startswith("postgres://"):
                 self.db_url = "postgresql://" + self.db_url[len("postgres://"):]
 
-            # Streamlit Cloud blocks IPv6 — Supabase direct connections use IPv6.
-            # Convert to the Session Mode pooler URL which uses IPv4.
-            # Direct:  postgresql://postgres:pw@db.PROJECTREF.supabase.co:5432/postgres
-            # Pooler:  postgresql://postgres.PROJECTREF:pw@aws-0-eu-central-1.pooler.supabase.com:5432/postgres
-            import re
-            m = re.match(
-                r"postgresql://postgres:(.+)@db\.([a-z0-9]+)\.supabase\.co:5432/postgres",
-                self.db_url
-            )
-            if m:
-                password   = m.group(1)
-                project    = m.group(2)
-                # Use session-mode pooler (port 5432, IPv4, persistent connections)
-                self.db_url = (
-                    f"postgresql://postgres.{project}:{password}"
-                    f"@aws-0-eu-central-1.pooler.supabase.com:5432/postgres"
-                    f"?sslmode=require"
-                )
-
-            # Add SSL if not present
-            elif "supabase" in self.db_url and "sslmode" not in self.db_url:
+            # Add sslmode=require for Supabase if not already present
+            if "supabase" in self.db_url and "sslmode" not in self.db_url:
                 sep = "&" if "?" in self.db_url else "?"
                 self.db_url += f"{sep}sslmode=require"
 
