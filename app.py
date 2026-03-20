@@ -955,7 +955,7 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 # MAIN TABS
 # ─────────────────────────────────────────────
-tab_overview, tab_player, tab_compare, tab_ranking, tab_saeulen, tab_flags, tab_pdf = st.tabs([
+tab_overview, tab_player, tab_compare, tab_ranking, tab_saeulen, tab_flags, tab_pdf, tab_squad = st.tabs([
     "📊 Überblick",
     "👤 Spielerin",
     "⚡ Vergleich",
@@ -963,6 +963,7 @@ tab_overview, tab_player, tab_compare, tab_ranking, tab_saeulen, tab_flags, tab_
     "📊 Säulendiagramme",
     "🚨 Verletzungsrisiko",
     "📄 PDF Reports",
+    "👥 Spielerinnen",
 ])
 
 # ══════════════════════════════════════════════
@@ -1443,3 +1444,91 @@ with tab_pdf:
             mime="application/zip",
         )
         status.text("✓ Fertig!")
+
+# ══════════════════════════════════════════════
+# SPIELERINNEN MANAGEMENT
+# ══════════════════════════════════════════════
+with tab_squad:
+    st.markdown("### Spielerinnen verwalten")
+    st.caption("Kader ändert sich automatisch — neue Spielerinnen erscheinen nach dem ersten Upload, "
+               "ehemalige werden hier entfernt.")
+
+    # ── Current squad overview ──────────────────
+    st.markdown("#### Aktueller Kader")
+
+    # Build per-player session summary
+    squad_rows = []
+    for name in players:
+        p_sessions = db.get_player_sessions(name)
+        last_rec = df[(df["name"] == name)].sort_values("session").iloc[-1] if not df[df["name"]==name].empty else None
+        squad_rows.append({
+            "Spielerin":    name,
+            "Sessions":     len(p_sessions),
+            "Erste Session": p_sessions[0] if p_sessions else "—",
+            "Letzte Session": p_sessions[-1] if p_sessions else "—",
+            "Im Kader seit": p_sessions[0] if p_sessions else "—",
+        })
+
+    squad_df = pd.DataFrame(squad_rows)
+    st.dataframe(squad_df.set_index("Spielerin"), use_container_width=True)
+    st.caption(f"**{len(players)} Spielerinnen** mit Messdaten · "
+               f"Spielerinnen werden automatisch hinzugefügt wenn sie in einem Upload erscheinen.")
+
+    st.divider()
+
+    col_a, col_b = st.columns(2)
+
+    # ── Rename player ───────────────────────────
+    with col_a:
+        st.markdown("#### Spielerin umbenennen")
+        st.caption("Z.B. bei Heirat, Tippfehler im Namen oder Spitzname im Excel")
+        rename_from = st.selectbox("Spielerin", ["— auswählen —"] + players, key="rename_from")
+        rename_to   = st.text_input("Neuer Name", key="rename_to",
+                                     placeholder="Korrekter vollständiger Name")
+        if st.button("✏️ Umbenennen", disabled=(rename_from == "— auswählen —" or not rename_to.strip())):
+            db.rename_player(rename_from, rename_to.strip())
+            st.success(f"✓ '{rename_from}' → '{rename_to.strip()}'")
+            st.rerun()
+
+    # ── Remove player ───────────────────────────
+    with col_b:
+        st.markdown("#### Spielerin entfernen")
+        st.caption("Entfernt die Spielerin und ALLE ihre Messdaten dauerhaft. "
+                   "Nur verwenden wenn die Spielerin den Verein verlassen hat.")
+        remove_player = st.selectbox("Spielerin", ["— auswählen —"] + players, key="remove_player")
+        if remove_player != "— auswählen —":
+            p_sess = db.get_player_sessions(remove_player)
+            st.warning(f"⚠ Löscht **{len(p_sess)} Session(en)** mit Daten: {', '.join(p_sess)}")
+        confirm = st.checkbox("Ich bestätige die dauerhafte Löschung", key="confirm_delete")
+        if st.button("🗑 Dauerhaft entfernen",
+                     disabled=(remove_player == "— auswählen —" or not confirm),
+                     type="primary"):
+            db.delete_player(remove_player)
+            st.success(f"✓ '{remove_player}' und alle Messdaten gelöscht.")
+            st.rerun()
+
+    st.divider()
+
+    # ── DB maintenance ──────────────────────────
+    st.markdown("#### Datenbank-Wartung")
+    col_c, col_d = st.columns(2)
+
+    with col_c:
+        st.markdown("**Duplikate bereinigen**")
+        st.caption("Entfernt Spieler-Einträge ohne Messdaten "
+                   "(entstehen bei fehlgeschlagenen Uploads).")
+        if st.button("🧹 Bereinigen"):
+            n = db.clean_orphan_players()
+            st.success(f"✓ {n} verwaiste Einträge entfernt.")
+            st.rerun()
+
+    with col_d:
+        st.markdown("**Datenbank zurücksetzen**")
+        st.caption("⚠ Löscht ALLE Daten und seedet neu. Nur bei korruptem Zustand verwenden.")
+        confirm_reset = st.checkbox("Ich verstehe dass alle Daten gelöscht werden", key="confirm_reset")
+        if st.button("💣 Zurücksetzen & neu seeden",
+                     disabled=not confirm_reset, type="primary"):
+            with st.spinner("Setze zurück..."):
+                db.reset_and_reseed()
+            st.success("✓ Datenbank zurückgesetzt und neu geseedet.")
+            st.rerun()
