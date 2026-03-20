@@ -1289,6 +1289,8 @@ with tab_ranking:
 
     info = RAW_METRICS[rk_metric]
     rk_df = df[(df["session"] == rk_session) & df[rk_metric].notna()].copy()
+    rk_df[rk_metric] = pd.to_numeric(rk_df[rk_metric], errors="coerce")
+    rk_df = rk_df[rk_df[rk_metric].notna()]
     rk_df = rk_df.sort_values(rk_metric, ascending=not info["hib"])
     rk_df["#"] = range(1, len(rk_df) + 1)
     rk_df["Metrik"] = rk_df[rk_metric].round(3)
