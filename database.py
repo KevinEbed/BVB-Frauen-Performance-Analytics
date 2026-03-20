@@ -384,9 +384,14 @@ class BVBDatabase:
                 JOIN sessions s ON s.id = m.session_id
                 ORDER BY s.session_date, p.name
             """
-            df = pd.read_sql_query(query, conn)
+            # Use cursor directly to avoid pandas SQLAlchemy warning with psycopg2
+            cur = conn.cursor()
+            cur.execute(query)
+            cols = [desc[0] for desc in cur.description]
+            rows = cur.fetchall()
             conn.close()
-            # Ensure all metric columns are float (PostgreSQL can return objects)
+            df = pd.DataFrame(rows, columns=cols)
+            # Ensure all metric columns are float
             numeric_cols = [
                 "cmj_1","cmj_2","cmj_3","dvj_kontaktzeit","dvj_hoehe",
                 "sprint_t5_r1","sprint_t10_r1","sprint_t20_r1","sprint_t30_r1",
@@ -446,9 +451,12 @@ class BVBDatabase:
             GROUP BY s.label
             ORDER BY s.session_date
         """
-        df = pd.read_sql_query(query, conn)
+        cur = conn.cursor()
+        cur.execute(query)
+        cols = [desc[0] for desc in cur.description]
+        rows = cur.fetchall()
         conn.close()
-        return df
+        return pd.DataFrame(rows, columns=cols)
 
     # ── Maintenance ───────────────────────────────────────────────────
 
