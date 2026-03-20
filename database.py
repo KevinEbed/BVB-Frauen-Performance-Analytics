@@ -330,28 +330,114 @@ class BVBDatabase:
                                 session_date: str = None):
         """
         Bulk-save a parsed DataFrame (from Excel upload) into the database.
-        df must have columns: name + all metric columns.
-        session_date must be a real ISO date string (YYYY-MM-DD) or None.
+        df has pre-computed best values: cmj, dj_rsi, t5, t10, t20, t30,
+        agility, dribbling, vo2max. These are stored directly — no recomputation.
         """
+        import numpy as np
+
+        def val(v):
+            """Return float or None — never NaN."""
+            if v is None:
+                return None
+            try:
+                f = float(v)
+                return None if np.isnan(f) else f
+            except:
+                return None
+
+        conn = self._connect()
+        cur  = conn.cursor()
+        ph   = self._ph()
+
         for _, row in df.iterrows():
-            rec = row.to_dict()
-            rec["session"] = label
-            rec["date"]    = session_date  # None is fine — stored as NULL
-            # Map app column names → db column names
-            mapping = {
-                "cmj": "cmj_best", "dj_rsi": "dj_rsi",
-                "t5": "t5", "t10": "t10", "t20": "t20", "t30": "t30",
-                "agility": "agility", "dribbling": "dribbling", "vo2max": "vo2max",
-            }
-            # Fill missing raw attempts with None
-            for col in ["cmj_1","cmj_2","cmj_3","dvj_kontaktzeit","dvj_hoehe",
-                        "sprint_t5_r1","sprint_t10_r1","sprint_t20_r1","sprint_t30_r1",
-                        "sprint_t5_r2","sprint_t10_r2","sprint_t20_r2","sprint_t30_r2",
-                        "agility_r1","agility_r2","dribbling_r1","dribbling_r2",
-                        "yoyo_level","yoyo_shuttles","hf_max"]:
-                if col not in rec:
-                    rec[col] = None
-            self.upsert_record(rec)
+            name = str(row.get("name", "")).strip()
+            if not name or len(name) < 2:
+                continue
+
+            # Upsert session
+            if self.use_postgres:
+                cur.execute(
+                    f"INSERT INTO sessions (label) VALUES ({ph}) "
+                    f"ON CONFLICT(label) DO NOTHING",
+                    (label,)
+                )
+            else:
+                cur.execute(
+                    "INSERT OR IGNORE INTO sessions (label) VALUES (?)", (label,)
+                )
+
+            # Upsert player
+            if self.use_postgres:
+                cur.execute(
+                    f"INSERT INTO players (name) VALUES ({ph}) ON CONFLICT(name) DO NOTHING",
+                    (name,)
+                )
+            else:
+                cur.execute(
+                    "INSERT OR IGNORE INTO players (name) VALUES (?)", (name,)
+                )
+
+            cur.execute(f"SELECT id FROM sessions WHERE label={ph}", (label,))
+            sess_id = cur.fetchone()[0]
+            cur.execute(f"SELECT id FROM players WHERE name={ph}", (name,))
+            player_id = cur.fetchone()[0]
+
+            # Use pre-computed best values from parse_excel directly
+            cmj_best  = val(row.get("cmj"))
+            dj_rsi    = val(row.get("dj_rsi"))
+            t5        = val(row.get("t5"))
+            t10       = val(row.get("t10"))
+            t20       = val(row.get("t20"))
+            t30       = val(row.get("t30"))
+            agility   = val(row.get("agility"))
+            dribbling = val(row.get("dribbling"))
+            vo2max    = val(row.get("vo2max"))
+
+            vals = (player_id, sess_id,
+                    None, None, None, None, None,  # cmj_1,2,3, dvj_kontaktzeit, dvj_hoehe
+                    None, None, None, None,         # sprint_t5_r1..t30_r1
+                    None, None, None, None,         # sprint_t5_r2..t30_r2
+                    None, None, None, None, None,   # agility_r1,r2, dribbling_r1,r2, hf_max
+                    None, None,                     # yoyo_level, yoyo_shuttles
+                    cmj_best, dj_rsi, t5, t10, t20, t30, agility, dribbling, vo2max)
+
+            if self.use_postgres:
+                cur.execute(f"""
+                    INSERT INTO measurements
+                      (player_id,session_id,
+                       cmj_1,cmj_2,cmj_3,dvj_kontaktzeit,dvj_hoehe,
+                       sprint_t5_r1,sprint_t10_r1,sprint_t20_r1,sprint_t30_r1,
+                       sprint_t5_r2,sprint_t10_r2,sprint_t20_r2,sprint_t30_r2,
+                       agility_r1,agility_r2,dribbling_r1,dribbling_r2,
+                       yoyo_level,yoyo_shuttles,hf_max,
+                       cmj_best,dj_rsi,t5,t10,t20,t30,agility,dribbling,vo2max)
+                    VALUES ({','.join([ph]*31)})
+                    ON CONFLICT(player_id,session_id) DO UPDATE SET
+                      cmj_best=excluded.cmj_best, dj_rsi=excluded.dj_rsi,
+                      t5=excluded.t5, t10=excluded.t10, t20=excluded.t20, t30=excluded.t30,
+                      agility=excluded.agility, dribbling=excluded.dribbling,
+                      vo2max=excluded.vo2max
+                """, vals)
+            else:
+                cur.execute("""
+                    INSERT INTO measurements
+                      (player_id,session_id,
+                       cmj_1,cmj_2,cmj_3,dvj_kontaktzeit,dvj_hoehe,
+                       sprint_t5_r1,sprint_t10_r1,sprint_t20_r1,sprint_t30_r1,
+                       sprint_t5_r2,sprint_t10_r2,sprint_t20_r2,sprint_t30_r2,
+                       agility_r1,agility_r2,dribbling_r1,dribbling_r2,
+                       yoyo_level,yoyo_shuttles,hf_max,
+                       cmj_best,dj_rsi,t5,t10,t20,t30,agility,dribbling,vo2max)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(player_id,session_id) DO UPDATE SET
+                      cmj_best=excluded.cmj_best, dj_rsi=excluded.dj_rsi,
+                      t5=excluded.t5, t10=excluded.t10, t20=excluded.t20, t30=excluded.t30,
+                      agility=excluded.agility, dribbling=excluded.dribbling,
+                      vo2max=excluded.vo2max
+                """, vals)
+
+        conn.commit()
+        conn.close()
 
     # ── Read ──────────────────────────────────────────────
 
