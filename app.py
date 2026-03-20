@@ -912,6 +912,30 @@ players   = sorted(df[df["cmj"].notna()]["name"].unique().tolist())
 last_sess = sessions[-1] if sessions else None
 prev_sess = sessions[-2] if len(sessions) > 1 else None
 
+# ── Empty database guard ─────────────────────────────────────────────
+if not sessions:
+    st.title("🟡 BVB Frauen · Performance Analytics")
+    st.divider()
+    st.info(
+        "**Datenbank ist leer.** Lade deine erste Session hoch um zu starten."
+    )
+    st.markdown("### 📂 Erste Session laden")
+    new_sess_label = st.text_input("Session-Name", placeholder='z.B. "Jan 26"')
+    uploaded_first = st.file_uploader(
+        "Messprotokoll Excel", type=["xlsx", "xls"], key="first_upload"
+    )
+    if st.button("📥 Laden", disabled=not (uploaded_first and new_sess_label.strip())):
+        with st.spinner("Verarbeite..."):
+            parsed = parse_excel(uploaded_first, new_sess_label.strip())
+            if parsed.empty:
+                st.error("Keine Daten erkannt. Stelle sicher dass die Datei "
+                         "das BVB Frauen Messprotokoll Format hat.")
+            else:
+                db.upsert_session_from_df(parsed, new_sess_label.strip())
+                st.success(f"✓ {len(parsed)} Spielerinnen geladen!")
+                st.rerun()
+    st.stop()  # Don't render the rest of the app until data exists
+
 # ─────────────────────────────────────────────
 # SIDEBAR
 # ─────────────────────────────────────────────
