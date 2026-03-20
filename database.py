@@ -433,6 +433,11 @@ class BVBDatabase:
         if count == 0:
             for rec in SEED_RECORDS:
                 self.upsert_record(rec)
+        # Always clean up any orphan player records from failed attempts
+        removed = self.clean_orphan_players()
+        if removed > 0:
+            import streamlit as st
+            pass  # silently cleaned
 
     # ── Write ──────────────────────────────────────────────
 
@@ -644,9 +649,15 @@ class BVBDatabase:
         return rows
 
     def get_players(self) -> list:
+        """Only players who have at least one measurement — no ghost records."""
         conn = self._connect()
         cur  = conn.cursor()
-        cur.execute("SELECT name FROM players ORDER BY name")
+        cur.execute("""
+            SELECT DISTINCT p.name
+            FROM players p
+            JOIN measurements m ON m.player_id = p.id
+            ORDER BY p.name
+        """)
         rows = [r[0] for r in cur.fetchall()]
         conn.close()
         return rows
@@ -665,3 +676,102 @@ class BVBDatabase:
         df = pd.read_sql_query(query, conn)
         conn.close()
         return df
+
+    # ── Maintenance ───────────────────────────────────────────────────
+
+    def clean_orphan_players(self) -> int:
+        """
+        Remove players who have no measurements at all.
+        Happens when a failed seed attempt creates player records
+        without the matching measurement records.
+        Returns number of deleted rows.
+        """
+        conn = self._connect()
+        cur  = conn.cursor()
+        ph   = self._ph()
+        cur.execute("""
+            DELETE FROM players
+            WHERE id NOT IN (
+                SELECT DISTINCT player_id FROM measurements
+            )
+        """)
+        deleted = cur.rowcount
+        conn.commit()
+        conn.close()
+        return deleted
+
+    def reset_and_reseed(self):
+        """
+        Drop all data and reseed from scratch.
+        Use this to fix a corrupted/duplicate Supabase state.
+        """
+        conn = self._connect()
+        cur  = conn.cursor()
+        # Delete in dependency order
+        cur.execute("DELETE FROM measurements")
+        cur.execute("DELETE FROM sessions")
+        cur.execute("DELETE FROM players")
+        # Reset auto-increment sequences (PostgreSQL)
+        if self.use_postgres:
+            cur.execute("ALTER SEQUENCE measurements_id_seq RESTART WITH 1")
+            cur.execute("ALTER SEQUENCE sessions_id_seq RESTART WITH 1")
+            cur.execute("ALTER SEQUENCE players_id_seq RESTART WITH 1")
+        conn.commit()
+        conn.close()
+        self._seed_if_empty()
+
+    def rename_player(self, old_name: str, new_name: str):
+        """Rename a player across all measurements."""
+        conn = self._connect()
+        cur  = conn.cursor()
+        ph   = self._ph()
+        cur.execute(f"UPDATE players SET name={ph} WHERE name={ph}",
+                    (new_name, old_name))
+        conn.commit()
+        conn.close()
+
+    def delete_player(self, name: str):
+        """
+        Remove a player and all their measurements from the database.
+        Use when a player has permanently left the squad.
+        """
+        conn = self._connect()
+        cur  = conn.cursor()
+        ph   = self._ph()
+        cur.execute(f"SELECT id FROM players WHERE name={ph}", (name,))
+        row = cur.fetchone()
+        if row:
+            cur.execute(f"DELETE FROM measurements WHERE player_id={ph}", (row[0],))
+            cur.execute(f"DELETE FROM players WHERE id={ph}", (row[0],))
+        conn.commit()
+        conn.close()
+
+    def get_player_sessions(self, name: str) -> list:
+        """Return list of sessions a player has appeared in."""
+        conn = self._connect()
+        cur  = conn.cursor()
+        ph   = self._ph()
+        cur.execute(f"""
+            SELECT s.label FROM measurements m
+            JOIN sessions s ON s.id = m.session_id
+            JOIN players p ON p.id = m.player_id
+            WHERE p.name = {ph}
+            ORDER BY s.session_date
+        """, (name,))
+        rows = [r[0] for r in cur.fetchall()]
+        conn.close()
+        return rows
+
+    def get_all_players_ever(self) -> list:
+        """All players who have ever had a measurement — the real squad list."""
+        conn = self._connect()
+        cur  = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT p.name
+            FROM players p
+            JOIN measurements m ON m.player_id = p.id
+            ORDER BY p.name
+        """)
+        rows = [r[0] for r in cur.fetchall()]
+        conn.close()
+        return rows
