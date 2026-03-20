@@ -1108,7 +1108,7 @@ with tab_player:
         else:
             rec = rec.iloc[0]
             cluster_info = compute_clusters(df, last_sess)
-            cl = cluster_info[cluster_info["name"] == selected_player]
+            cl = cluster_info[cluster_info["name"] == selected_player] if not cluster_info.empty and "name" in cluster_info.columns else pd.DataFrame()
 
             col_head, col_btn = st.columns([4, 1])
             with col_head:
