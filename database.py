@@ -272,20 +272,47 @@ class BVBDatabase:
 
     def __init__(self):
         # Check both environment variable and Streamlit secrets
-        self.db_url = os.environ.get("DATABASE_URL", "")
+        self.db_url = os.environ.get("DATABASE_URL", "").strip()
 
         # Also check st.secrets if running in Streamlit
         if not self.db_url:
             try:
                 import streamlit as st
-                self.db_url = st.secrets.get("DATABASE_URL", "")
+                self.db_url = str(st.secrets.get("DATABASE_URL", "")).strip()
             except Exception:
                 pass
 
-        self.use_postgres = bool(self.db_url) and (
-            self.db_url.startswith("postgresql") or
-            self.db_url.startswith("postgres")
-        )
+        # Clean up the URL
+        if self.db_url:
+            # psycopg2 needs "postgresql://" not "postgres://"
+            if self.db_url.startswith("postgres://"):
+                self.db_url = "postgresql://" + self.db_url[len("postgres://"):]
+
+            # Streamlit Cloud blocks IPv6 — Supabase direct connections use IPv6.
+            # Convert to the Session Mode pooler URL which uses IPv4.
+            # Direct:  postgresql://postgres:pw@db.PROJECTREF.supabase.co:5432/postgres
+            # Pooler:  postgresql://postgres.PROJECTREF:pw@aws-0-eu-central-1.pooler.supabase.com:5432/postgres
+            import re
+            m = re.match(
+                r"postgresql://postgres:(.+)@db\.([a-z0-9]+)\.supabase\.co:5432/postgres",
+                self.db_url
+            )
+            if m:
+                password   = m.group(1)
+                project    = m.group(2)
+                # Use session-mode pooler (port 5432, IPv4, persistent connections)
+                self.db_url = (
+                    f"postgresql://postgres.{project}:{password}"
+                    f"@aws-0-eu-central-1.pooler.supabase.com:5432/postgres"
+                    f"?sslmode=require"
+                )
+
+            # Add SSL if not present
+            elif "supabase" in self.db_url and "sslmode" not in self.db_url:
+                sep = "&" if "?" in self.db_url else "?"
+                self.db_url += f"{sep}sslmode=require"
+
+        self.use_postgres = bool(self.db_url) and             self.db_url.startswith("postgresql")
 
         if self.use_postgres:
             self.db_path = None
@@ -297,7 +324,10 @@ class BVBDatabase:
         if self.use_postgres:
             try:
                 import psycopg2
-                return psycopg2.connect(self.db_url)
+                return psycopg2.connect(
+                    self.db_url,
+                    connect_timeout=10,
+                )
             except ImportError:
                 raise ImportError(
                     "psycopg2-binary is required for PostgreSQL. "
@@ -320,46 +350,43 @@ class BVBDatabase:
         conn = self._connect()
         cur  = conn.cursor()
 
-        cur.executescript("""
-            CREATE TABLE IF NOT EXISTS sessions (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                label        TEXT    NOT NULL UNIQUE,
-                session_date TEXT,
-                created_at   TEXT    DEFAULT (datetime('now'))
-            );
-
-            CREATE TABLE IF NOT EXISTS players (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                name       TEXT    NOT NULL UNIQUE,
-                created_at TEXT    DEFAULT (datetime('now'))
-            );
-
-            CREATE TABLE IF NOT EXISTS measurements (
-                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-                player_id          INTEGER NOT NULL REFERENCES players(id),
-                session_id         INTEGER NOT NULL REFERENCES sessions(id),
-                -- Raw attempts
-                cmj_1              REAL, cmj_2 REAL, cmj_3 REAL,
-                dvj_kontaktzeit    REAL, dvj_hoehe REAL,
-                sprint_t5_r1       REAL, sprint_t10_r1 REAL,
-                sprint_t20_r1      REAL, sprint_t30_r1 REAL,
-                sprint_t5_r2       REAL, sprint_t10_r2 REAL,
-                sprint_t20_r2      REAL, sprint_t30_r2 REAL,
-                agility_r1         REAL, agility_r2 REAL,
-                dribbling_r1       REAL, dribbling_r2 REAL,
-                yoyo_level         REAL, yoyo_shuttles REAL,
-                hf_max             REAL,
-                -- Best / computed values
-                cmj_best           REAL,
-                dj_rsi             REAL,
-                t5                 REAL, t10 REAL, t20 REAL, t30 REAL,
-                agility            REAL,
-                dribbling          REAL,
-                vo2max             REAL,
-                created_at         TEXT DEFAULT (datetime('now')),
-                UNIQUE(player_id, session_id)
-            );
-        """) if not self.use_postgres else self._init_postgres(cur)
+        if self.use_postgres:
+            self._init_postgres(cur)
+        else:
+            # SQLite supports executescript for multi-statement DDL
+            cur.executescript("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    label        TEXT    NOT NULL UNIQUE,
+                    session_date TEXT,
+                    created_at   TEXT    DEFAULT (datetime('now'))
+                );
+                CREATE TABLE IF NOT EXISTS players (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name       TEXT    NOT NULL UNIQUE,
+                    created_at TEXT    DEFAULT (datetime('now'))
+                );
+                CREATE TABLE IF NOT EXISTS measurements (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    player_id          INTEGER NOT NULL REFERENCES players(id),
+                    session_id         INTEGER NOT NULL REFERENCES sessions(id),
+                    cmj_1 REAL, cmj_2 REAL, cmj_3 REAL,
+                    dvj_kontaktzeit REAL, dvj_hoehe REAL,
+                    sprint_t5_r1 REAL, sprint_t10_r1 REAL,
+                    sprint_t20_r1 REAL, sprint_t30_r1 REAL,
+                    sprint_t5_r2 REAL, sprint_t10_r2 REAL,
+                    sprint_t20_r2 REAL, sprint_t30_r2 REAL,
+                    agility_r1 REAL, agility_r2 REAL,
+                    dribbling_r1 REAL, dribbling_r2 REAL,
+                    yoyo_level REAL, yoyo_shuttles REAL,
+                    hf_max REAL,
+                    cmj_best REAL, dj_rsi REAL,
+                    t5 REAL, t10 REAL, t20 REAL, t30 REAL,
+                    agility REAL, dribbling REAL, vo2max REAL,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    UNIQUE(player_id, session_id)
+                );
+            """)
 
         conn.commit()
         conn.close()
