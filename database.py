@@ -386,6 +386,18 @@ class BVBDatabase:
             """
             df = pd.read_sql_query(query, conn)
             conn.close()
+            # Ensure all metric columns are float (PostgreSQL can return objects)
+            numeric_cols = [
+                "cmj_1","cmj_2","cmj_3","dvj_kontaktzeit","dvj_hoehe",
+                "sprint_t5_r1","sprint_t10_r1","sprint_t20_r1","sprint_t30_r1",
+                "sprint_t5_r2","sprint_t10_r2","sprint_t20_r2","sprint_t30_r2",
+                "agility_r1","agility_r2","dribbling_r1","dribbling_r2",
+                "yoyo_level","yoyo_shuttles","hf_max",
+                "cmj","dj_rsi","t5","t10","t20","t30","agility","dribbling","vo2max"
+            ]
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
             return df
         except Exception:
             # Tables don't exist yet — return empty DataFrame with correct columns
