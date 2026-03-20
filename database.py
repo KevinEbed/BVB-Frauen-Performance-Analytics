@@ -271,18 +271,38 @@ class BVBDatabase:
     """
 
     def __init__(self):
+        # Check both environment variable and Streamlit secrets
         self.db_url = os.environ.get("DATABASE_URL", "")
-        self.use_postgres = self.db_url.startswith("postgresql") or \
-                            self.db_url.startswith("postgres")
+
+        # Also check st.secrets if running in Streamlit
+        if not self.db_url:
+            try:
+                import streamlit as st
+                self.db_url = st.secrets.get("DATABASE_URL", "")
+            except Exception:
+                pass
+
+        self.use_postgres = bool(self.db_url) and (
+            self.db_url.startswith("postgresql") or
+            self.db_url.startswith("postgres")
+        )
+
         if self.use_postgres:
             self.db_path = None
         else:
+            # SQLite — store next to database.py
             self.db_path = Path(__file__).parent / "bvb_data.db"
 
     def _connect(self):
         if self.use_postgres:
-            import psycopg2
-            return psycopg2.connect(self.db_url)
+            try:
+                import psycopg2
+                return psycopg2.connect(self.db_url)
+            except ImportError:
+                raise ImportError(
+                    "psycopg2-binary is required for PostgreSQL. "
+                    "Add it to requirements.txt"
+                )
         else:
             conn = sqlite3.connect(str(self.db_path))
             conn.execute("PRAGMA journal_mode=WAL")
