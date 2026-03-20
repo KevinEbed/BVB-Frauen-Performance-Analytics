@@ -88,14 +88,14 @@ class BVBDatabase:
     # ── Schema ────────────────────────────────────────────
 
     def init(self):
-        """Create tables if they don't exist, then seed if empty."""
+        """Create tables if they don't exist. Tables are committed before returning."""
         conn = self._connect()
         cur  = conn.cursor()
 
         if self.use_postgres:
             self._init_postgres(cur)
+            conn.commit()  # commit immediately so tables exist for subsequent queries
         else:
-            # SQLite supports executescript for multi-statement DDL
             cur.executescript("""
                 CREATE TABLE IF NOT EXISTS sessions (
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -347,34 +347,48 @@ class BVBDatabase:
     def load_dataframe(self) -> pd.DataFrame:
         """
         Load all measurements joined with player names and session labels.
-        Returns a DataFrame in the same format the app expects.
+        Returns empty DataFrame if tables don't exist yet.
         """
         conn = self._connect()
-        query = """
-            SELECT
-                p.name        AS name,
-                s.label       AS session,
-                m.cmj_1, m.cmj_2, m.cmj_3,
-                m.dvj_kontaktzeit, m.dvj_hoehe,
-                m.sprint_t5_r1,  m.sprint_t10_r1,
-                m.sprint_t20_r1, m.sprint_t30_r1,
-                m.sprint_t5_r2,  m.sprint_t10_r2,
-                m.sprint_t20_r2, m.sprint_t30_r2,
-                m.agility_r1, m.agility_r2,
-                m.dribbling_r1, m.dribbling_r2,
-                m.yoyo_level, m.yoyo_shuttles, m.hf_max,
-                m.cmj_best  AS cmj,
-                m.dj_rsi,
-                m.t5, m.t10, m.t20, m.t30,
-                m.agility, m.dribbling, m.vo2max
-            FROM measurements m
-            JOIN players  p ON p.id = m.player_id
-            JOIN sessions s ON s.id = m.session_id
-            ORDER BY s.session_date, p.name
-        """
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df
+        try:
+            query = """
+                SELECT
+                    p.name        AS name,
+                    s.label       AS session,
+                    m.cmj_1, m.cmj_2, m.cmj_3,
+                    m.dvj_kontaktzeit, m.dvj_hoehe,
+                    m.sprint_t5_r1,  m.sprint_t10_r1,
+                    m.sprint_t20_r1, m.sprint_t30_r1,
+                    m.sprint_t5_r2,  m.sprint_t10_r2,
+                    m.sprint_t20_r2, m.sprint_t30_r2,
+                    m.agility_r1, m.agility_r2,
+                    m.dribbling_r1, m.dribbling_r2,
+                    m.yoyo_level, m.yoyo_shuttles, m.hf_max,
+                    m.cmj_best  AS cmj,
+                    m.dj_rsi,
+                    m.t5, m.t10, m.t20, m.t30,
+                    m.agility, m.dribbling, m.vo2max
+                FROM measurements m
+                JOIN players  p ON p.id = m.player_id
+                JOIN sessions s ON s.id = m.session_id
+                ORDER BY s.session_date, p.name
+            """
+            df = pd.read_sql_query(query, conn)
+            conn.close()
+            return df
+        except Exception:
+            # Tables don't exist yet — return empty DataFrame with correct columns
+            conn.close()
+            return pd.DataFrame(columns=[
+                "name", "session", "cmj_1", "cmj_2", "cmj_3",
+                "dvj_kontaktzeit", "dvj_hoehe",
+                "sprint_t5_r1", "sprint_t10_r1", "sprint_t20_r1", "sprint_t30_r1",
+                "sprint_t5_r2", "sprint_t10_r2", "sprint_t20_r2", "sprint_t30_r2",
+                "agility_r1", "agility_r2", "dribbling_r1", "dribbling_r2",
+                "yoyo_level", "yoyo_shuttles", "hf_max",
+                "cmj", "dj_rsi", "t5", "t10", "t20", "t30",
+                "agility", "dribbling", "vo2max"
+            ])
 
     def get_sessions(self) -> list:
         conn = self._connect()
