@@ -1022,7 +1022,7 @@ with tab_overview:
     st.divider()
     col1, col2 = st.columns(2)
     with col1:
-        st.plotly_chart(team_radar_chart(df), use_container_width=True)
+        st.plotly_chart(team_radar_chart(df), use_container_width=True, key="team_radar")
     with col2:
         st.markdown("#### Meistverbesserte")
         if prev_sess:
@@ -1078,7 +1078,7 @@ with tab_overview:
                                         xaxis=dict(tickfont=dict(color="#666")),
                                         yaxis=dict(tickfont=dict(color="#555")))
                 fig_trend.add_hline(y=0, line_color="#333")
-                st.plotly_chart(fig_trend, use_container_width=True)
+                st.plotly_chart(fig_trend, use_container_width=True, key="team_trend")
         else:
             st.info("Zwei Sessions benötigt.")
 
@@ -1124,12 +1124,12 @@ with tab_player:
             with c1:
                 player_sessions = sorted(df[df["name"] == selected_player]["session"].unique())
                 st.plotly_chart(radar_chart(df, [selected_player], player_sessions,
-                                           title=f"{selected_player} · Radar"), use_container_width=True)
+                                           title=f"{selected_player} · Radar"), use_container_width=True, key=f"player_radar_{selected_player}")
             with c2:
                 st.plotly_chart(comparison_bar(df, selected_player, selected_session),
-                                use_container_width=True)
+                                use_container_width=True, key=f"player_comp_{selected_player}_{selected_session}")
 
-            st.plotly_chart(trend_chart(df, selected_player), use_container_width=True)
+            st.plotly_chart(trend_chart(df, selected_player), use_container_width=True, key=f"player_trend_{selected_player}")
 
             c3, c4 = st.columns(2)
             with c3:
@@ -1207,7 +1207,7 @@ with tab_compare:
         c1, c2 = st.columns(2)
         with c1:
             st.plotly_chart(radar_chart(df, selected_players, [cmp_session],
-                                       title="Radar Vergleich"), use_container_width=True)
+                                       title="Radar Vergleich"), use_container_width=True, key="cmp_radar")
         with c2:
             cmp_metric = st.selectbox("Metrik", list(RAW_METRICS.keys()),
                                       format_func=lambda x: RAW_METRICS[x]["label"])
@@ -1230,7 +1230,7 @@ with tab_compare:
                                       showlegend=False,
                                       xaxis=dict(tickfont=dict(color="#666")),
                                       yaxis=dict(tickfont=dict(color="#555")))
-                st.plotly_chart(fig_cmp, use_container_width=True)
+                st.plotly_chart(fig_cmp, use_container_width=True, key=f"cmp_bar_{cmp_metric}")
 
         st.markdown("#### Detaillierter Vergleich")
         rows = []
@@ -1273,7 +1273,7 @@ with tab_compare:
                                  xaxis=dict(tickfont=dict(color="#666")),
                                  yaxis=dict(tickfont=dict(color="#555")),
                                  legend=dict(font_color="#666"))
-            st.plotly_chart(fig_tl, use_container_width=True)
+            st.plotly_chart(fig_tl, use_container_width=True, key=f"cmp_trend_{tl_metric}")
 
 # ══════════════════════════════════════════════
 # RANKINGS
@@ -1342,6 +1342,7 @@ with tab_saeulen:
         st.plotly_chart(
             ranked_bar_chart(df, saeulen_metric, saeulen_sessions),
             use_container_width=True,
+            key=f"saeul_main_{saeulen_metric}",
         )
 
         st.divider()
@@ -1359,7 +1360,7 @@ with tab_saeulen:
                                        showlegend=False,
                                        xaxis_tickfont_size=7,
                                        margin=dict(l=10, r=10, t=40, b=60))
-                st.plotly_chart(fig_mini, use_container_width=True)
+                st.plotly_chart(fig_mini, use_container_width=True, key=f"saeul_mini_{m}")
             with col_b:
                 if i + 1 < len(metrics_list):
                     m2 = metrics_list[i + 1]
@@ -1368,7 +1369,7 @@ with tab_saeulen:
                                             showlegend=False,
                                             xaxis_tickfont_size=7,
                                             margin=dict(l=10, r=10, t=40, b=60))
-                    st.plotly_chart(fig_mini2, use_container_width=True)
+                    st.plotly_chart(fig_mini2, use_container_width=True, key=f"saeul_mini_{m2}")
 
 # ══════════════════════════════════════════════
 # VERLETZUNGSRISIKO
