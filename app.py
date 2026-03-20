@@ -4,6 +4,7 @@ Streamlit App · run with: streamlit run app.py
 """
 
 import streamlit as st
+from database import BVBDatabase
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -102,41 +103,6 @@ def team_radar_z(df: pd.DataFrame, metric: str, sessions: list) -> list:
             result.append(z)
     return result
 
-SEED_DATA = [
-    {"name":"Laura van der Laan","session":"Jan 26","dj_rsi":1.840,"cmj":29.8,"t5":1.02,"t10":1.88,"t20":3.28,"t30":4.65,"vo2max":52.53,"agility":16.07,"dribbling":10.63},
-    {"name":"Mia Böger","session":"Jan 26","dj_rsi":1.817,"cmj":35.9,"t5":0.97,"t10":1.73,"t20":3.09,"t30":4.37,"vo2max":53.87,"agility":15.37,"dribbling":9.83},
-    {"name":"Jenske Steenjwijk","session":"Jan 26","dj_rsi":1.711,"cmj":30.9,"t5":1.04,"t10":1.85,"t20":3.24,"t30":4.58,"vo2max":50.18,"agility":15.48,"dribbling":10.10},
-    {"name":"Jasmin Jabbes","session":"Jan 26","dj_rsi":1.747,"cmj":33.4,"t5":1.08,"t10":1.85,"t20":3.19,"t30":4.46,"vo2max":60.93,"agility":15.34,"dribbling":9.88},
-    {"name":"Noreen Günnewig","session":"Jan 26","dj_rsi":1.728,"cmj":32.3,"t5":1.12,"t10":1.93,"t20":3.46,"t30":4.80,"vo2max":51.86,"agility":15.89,"dribbling":10.26},
-    {"name":"Nova Wicke","session":"Jan 26","dj_rsi":1.317,"cmj":28.9,"t5":1.03,"t10":1.82,"t20":3.19,"t30":4.47,"vo2max":44.46,"agility":15.65,"dribbling":10.43},
-    {"name":"Lucy Wisniewski","session":"Jan 26","dj_rsi":1.623,"cmj":28.8,"t5":1.07,"t10":1.91,"t20":3.36,"t30":4.73,"vo2max":49.84,"agility":16.13,"dribbling":10.06},
-    {"name":"Ronja Leubner","session":"Jan 26","dj_rsi":1.211,"cmj":35.6,"t5":1.03,"t10":1.82,"t20":3.20,"t30":4.56,"vo2max":51.86,"agility":15.38,"dribbling":10.33},
-    {"name":"Nora Willeke","session":"Jan 26","dj_rsi":1.462,"cmj":32.8,"t5":1.06,"t10":1.85,"t20":3.25,"t30":4.57,"vo2max":57.90,"agility":15.44,"dribbling":9.80},
-    {"name":"Celina Baum","session":"Jan 26","dj_rsi":1.511,"cmj":31.5,"t5":1.04,"t10":1.86,"t20":3.25,"t30":4.60,"vo2max":48.50,"agility":16.15,"dribbling":9.80},
-    {"name":"Annika Enderle","session":"Jan 26","dj_rsi":1.671,"cmj":33.0,"t5":0.98,"t10":1.84,"t20":3.17,"t30":4.40,"vo2max":52.36,"agility":15.21,"dribbling":9.72},
-    {"name":"Melanie Schuster","session":"Jan 26","dj_rsi":1.450,"cmj":29.0,"t5":1.12,"t10":1.99,"t20":3.44,"t30":4.84,"vo2max":49.17,"agility":15.83,"dribbling":9.87},
-    {"name":"Caroline Blum","session":"Jan 26","dj_rsi":1.293,"cmj":30.8,"t5":1.09,"t10":2.03,"t20":3.52,"t30":4.97,"vo2max":49.50,"agility":16.14,"dribbling":10.63},
-    {"name":"Paula Reimann","session":"Jan 26","dj_rsi":1.896,"cmj":29.9,"t5":1.11,"t10":1.96,"t20":3.43,"t30":4.84,"vo2max":51.18,"agility":16.37,"dribbling":9.91},
-    {"name":"Yasu Woehrn","session":"Jan 26","dj_rsi":1.711,"cmj":35.5,"t5":1.05,"t10":1.89,"t20":3.34,"t30":4.69,"vo2max":50.85,"agility":15.38,"dribbling":9.66},
-    {"name":"Laura van der Laan","session":"Mär 26","dj_rsi":1.798,"cmj":29.4,"t5":1.05,"t10":1.90,"t20":3.21,"t30":4.52,"vo2max":56.56,"agility":15.80,"dribbling":9.78},
-    {"name":"Mia Böger","session":"Mär 26","dj_rsi":1.797,"cmj":37.2,"t5":1.01,"t10":1.71,"t20":3.01,"t30":4.26,"vo2max":None,"agility":14.83,"dribbling":9.60},
-    {"name":"Jasmin Jabbes","session":"Mär 26","dj_rsi":1.763,"cmj":34.8,"t5":1.11,"t10":1.85,"t20":3.20,"t30":4.43,"vo2max":61.94,"agility":15.28,"dribbling":9.42},
-    {"name":"Noreen Günnewig","session":"Mär 26","dj_rsi":1.784,"cmj":32.9,"t5":1.04,"t10":1.84,"t20":3.22,"t30":4.56,"vo2max":53.87,"agility":15.55,"dribbling":9.53},
-    {"name":"Marina Scholz","session":"Mär 26","dj_rsi":2.129,"cmj":34.4,"t5":1.10,"t10":1.90,"t20":3.30,"t30":4.57,"vo2max":59.58,"agility":15.99,"dribbling":9.15},
-    {"name":"Rita Schumacher","session":"Mär 26","dj_rsi":2.324,"cmj":39.0,"t5":0.97,"t10":1.68,"t20":3.00,"t30":4.19,"vo2max":54.88,"agility":14.82,"dribbling":8.65},
-    {"name":"Sara Ito","session":"Mär 26","dj_rsi":1.023,"cmj":30.5,"t5":None,"t10":None,"t20":None,"t30":None,"vo2max":56.22,"agility":None,"dribbling":9.35},
-    {"name":"Lucy Wisniewski","session":"Mär 26","dj_rsi":1.786,"cmj":31.4,"t5":1.13,"t10":1.91,"t20":3.32,"t30":4.65,"vo2max":56.22,"agility":16.05,"dribbling":9.97},
-    {"name":"Ronja Leubner","session":"Mär 26","dj_rsi":1.487,"cmj":37.4,"t5":0.97,"t10":1.72,"t20":3.04,"t30":4.30,"vo2max":58.24,"agility":14.96,"dribbling":9.34},
-    {"name":"Nora Willeke","session":"Mär 26","dj_rsi":1.768,"cmj":33.8,"t5":1.02,"t10":1.74,"t20":3.06,"t30":4.29,"vo2max":59.92,"agility":15.20,"dribbling":9.54},
-    {"name":"Celina Baum","session":"Mär 26","dj_rsi":1.574,"cmj":32.6,"t5":1.07,"t10":1.86,"t20":3.25,"t30":4.56,"vo2max":58.24,"agility":16.00,"dribbling":9.28},
-    {"name":"Annika Enderle","session":"Mär 26","dj_rsi":1.766,"cmj":34.3,"t5":0.99,"t10":1.81,"t20":3.16,"t30":4.42,"vo2max":54.88,"agility":15.23,"dribbling":9.10},
-    {"name":"Frederike Kempe","session":"Mär 26","dj_rsi":2.238,"cmj":36.6,"t5":1.00,"t10":1.86,"t20":3.23,"t30":4.53,"vo2max":54.88,"agility":15.31,"dribbling":9.48},
-    {"name":"Melanie Schuster","session":"Mär 26","dj_rsi":1.594,"cmj":34.3,"t5":1.09,"t10":1.89,"t20":3.26,"t30":4.53,"vo2max":52.19,"agility":15.77,"dribbling":9.84},
-    {"name":"Caroline Blum","session":"Mär 26","dj_rsi":1.385,"cmj":33.7,"t5":1.12,"t10":1.91,"t20":3.42,"t30":4.81,"vo2max":50.18,"agility":15.89,"dribbling":9.90},
-    {"name":"Paula Reimann","session":"Mär 26","dj_rsi":2.026,"cmj":31.5,"t5":1.07,"t10":1.80,"t20":3.29,"t30":4.63,"vo2max":53.87,"agility":15.76,"dribbling":9.38},
-    {"name":"Yasu Woehrn","session":"Mär 26","dj_rsi":1.918,"cmj":43.3,"t5":1.02,"t10":1.81,"t20":3.18,"t30":4.44,"vo2max":58.91,"agility":15.30,"dribbling":9.32},
-]
-
 # ─────────────────────────────────────────────
 # ENGINE (same logic as bvb_engine.py, adapted for Streamlit state)
 # ─────────────────────────────────────────────
@@ -204,7 +170,9 @@ def parse_excel(file, session_label: str) -> pd.DataFrame:
 
 
 def get_df() -> pd.DataFrame:
-    return st.session_state.df
+    """Always loads fresh from DB and recomputes Z-scores."""
+    raw = st.session_state.db.load_dataframe()
+    return compute_z_scores(raw)
 
 
 def compute_injury_flags(df: pd.DataFrame, threshold: float = 8.0):
@@ -930,16 +898,19 @@ def generate_pdf(df: pd.DataFrame, name: str) -> bytes:
 # ─────────────────────────────────────────────
 # SESSION STATE INIT
 # ─────────────────────────────────────────────
-if "df" not in st.session_state:
-    df_raw = pd.DataFrame(SEED_DATA)
-    st.session_state.df = compute_z_scores(df_raw)
+# ── Database init ────────────────────────────────────────────────────
+if "db" not in st.session_state:
+    st.session_state.db = BVBDatabase()
+    st.session_state.db.init()   # creates tables + seeds if empty
 
-# Always read fresh from session_state — ensures post-upload reruns pick up new data
-df       = get_df()
+db = st.session_state.db
+
+# Load fresh from DB on every run — persistent across restarts
+df        = get_df()
 sessions  = sorted(df["session"].unique().tolist())
 players   = sorted(df[df["cmj"].notna()]["name"].unique().tolist())
-last_sess = sessions[-1]  if sessions  else None
-prev_sess = sessions[-2]  if len(sessions) > 1 else None
+last_sess = sessions[-1] if sessions else None
+prev_sess = sessions[-2] if len(sessions) > 1 else None
 
 # ─────────────────────────────────────────────
 # SIDEBAR
@@ -964,10 +935,9 @@ with st.sidebar:
             if parsed.empty:
                 st.error("Keine Daten erkannt. Prüfe Spaltenbezeichnungen.")
             else:
-                existing = st.session_state.df[st.session_state.df["session"] != new_sess_label.strip()]
-                combined = pd.concat([existing, parsed], ignore_index=True)
-                st.session_state.df = compute_z_scores(combined)
-                st.success(f"✓ {len(parsed)} Spielerinnen geladen")
+                # Save directly to DB — persists across restarts
+                db.upsert_session_from_df(parsed, new_sess_label.strip())
+                st.success(f"✓ {len(parsed)} Spielerinnen in DB gespeichert")
                 st.rerun()
 
     st.divider()
@@ -976,8 +946,7 @@ with st.sidebar:
     if removable:
         to_remove = st.selectbox("Session entfernen", ["—"] + removable)
         if st.button("🗑 Entfernen") and to_remove != "—":
-            st.session_state.df = st.session_state.df[st.session_state.df["session"] != to_remove]
-            st.session_state.df = compute_z_scores(st.session_state.df)
+            db.delete_session(to_remove)
             st.rerun()
 
     st.divider()
