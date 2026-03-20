@@ -66,6 +66,37 @@ def hex_rgba(hex_color: str, alpha: float) -> str:
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
     return f"rgba({r},{g},{b},{alpha})"
 
+
+def cross_norm(df: pd.DataFrame, metric: str, sessions: list) -> list:
+    """
+    Normalise team-average raw values across sessions to a 75-128 scale
+    so the radar shows meaningful differences between sessions.
+    (Z-scores average to ~100 within each session so they can't be used here.)
+    """
+    info = RAW_METRICS.get(metric, {})
+    hib  = info.get("hib", True)
+    avgs = []
+    for s in sessions:
+        sess_df = df[(df["session"] == s) & df["cmj"].notna()]
+        v = sess_df[metric].mean() if metric in sess_df.columns else np.nan
+        avgs.append(v if pd.notna(v) else None)
+    valid = [v for v in avgs if v is not None]
+    if len(valid) < 2:
+        return [100.0] * len(sessions)
+    mn, mx = min(valid), max(valid)
+    rng = mx - mn
+    result = []
+    for v in avgs:
+        if v is None:
+            result.append(85.0)
+        elif rng == 0:
+            result.append(100.0)
+        else:
+            # best session = 128, worst = 75
+            norm = 75 + ((v - mn) / rng * 53) if hib else 75 + ((mx - v) / rng * 53)
+            result.append(round(norm, 1))
+    return result
+
 SEED_DATA = [
     {"name":"Laura van der Laan","session":"Jan 26","dj_rsi":1.840,"cmj":29.8,"t5":1.02,"t10":1.88,"t20":3.28,"t30":4.65,"vo2max":52.53,"agility":16.07,"dribbling":10.63},
     {"name":"Mia Böger","session":"Jan 26","dj_rsi":1.817,"cmj":35.9,"t5":0.97,"t10":1.73,"t20":3.09,"t30":4.37,"vo2max":53.87,"agility":15.37,"dribbling":9.83},
@@ -607,36 +638,56 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
     sessions = sorted(df["session"].unique())
     fig = go.Figure()
     palette = ["#60A5FA", "#FDE000", "#4ADE80", "#FB923C"]
+
     for si, sess in enumerate(sessions):
+        # Use crossNorm so sessions are visually distinguishable.
+        # Direct Z-score averages are always ~100 (by definition of Z),
+        # which makes every session draw the same circle.
+        vals = [cross_norm(df, m, sessions)[si] for m in RADAR_METRICS]
+        # Build hover showing actual raw team averages
         sess_df = df[(df["session"] == sess) & df["cmj"].notna()]
-        vals = []
+        hover_vals = []
         for m in RADAR_METRICS:
-            zk = f"{m}_Z"
-            v = sess_df[zk].mean() if zk in sess_df.columns else np.nan
-            vals.append(v if pd.notna(v) else 100)
+            raw_avg = sess_df[m].mean() if m in sess_df.columns else None
+            unit = RAW_METRICS[m]["unit"]
+            hover_vals.append(
+                f"{RAW_METRICS[m]['label']}: {raw_avg:.2f} {unit}"
+                if raw_avg is not None and pd.notna(raw_avg) else
+                f"{RAW_METRICS[m]['label']}: —"
+            )
         color = palette[si % len(palette)]
         lw = 2.5 if si == len(sessions) - 1 else 1.5
         fig.add_trace(go.Scatterpolar(
             r=vals + [vals[0]],
             theta=RADAR_LABELS + [RADAR_LABELS[0]],
             fill="toself",
-            fillcolor=hex_rgba(color, 0.1),
+            fillcolor=hex_rgba(color, 0.12 if si == len(sessions)-1 else 0.06),
             line=dict(color=color, width=lw),
             name=sess,
-            hovertemplate="%{theta}: Z=%{r:.1f}<extra>" + sess + "</extra>",
+            customdata=(hover_vals + [hover_vals[0]]),
+            hovertemplate="%{customdata}<extra>" + sess + "</extra>",
         ))
+
     fig.update_layout(
         **PLOTLY_LAYOUT,
         polar=dict(
             bgcolor="#111",
-            radialaxis=dict(visible=True, range=[85, 115], showticklabels=False,
-                            gridcolor="#1e1e1e", linecolor="#2a2a2a"),
-            angularaxis=dict(gridcolor="#1e1e1e", linecolor="#2a2a2a",
-                             tickfont=dict(color="#666", size=11)),
+            radialaxis=dict(
+                visible=True, range=[65, 135],
+                showticklabels=False,
+                gridcolor="#222", linecolor="#2a2a2a",
+            ),
+            angularaxis=dict(
+                gridcolor="#1e1e1e", linecolor="#2a2a2a",
+                tickfont=dict(color="#666", size=11),
+            ),
         ),
         legend=dict(font_color="#666", bgcolor="rgba(0,0,0,0)"),
         height=350,
-        title=dict(text="Team Durchschnitt · Z-Score Radar", font_color="#FDE000", font_size=13),
+        title=dict(
+            text="Team Durchschnitt · Leistungsvergleich",
+            font_color="#FDE000", font_size=13,
+        ),
     )
     return fig
 
@@ -878,11 +929,12 @@ if "df" not in st.session_state:
     df_raw = pd.DataFrame(SEED_DATA)
     st.session_state.df = compute_z_scores(df_raw)
 
-df = get_df()
-sessions = sorted(df["session"].unique().tolist())
-players = sorted(df[df["cmj"].notna()]["name"].unique().tolist())
-last_sess = sessions[-1]
-prev_sess = sessions[-2] if len(sessions) > 1 else None
+# Always read fresh from session_state — ensures post-upload reruns pick up new data
+df       = get_df()
+sessions  = sorted(df["session"].unique().tolist())
+players   = sorted(df[df["cmj"].notna()]["name"].unique().tolist())
+last_sess = sessions[-1]  if sessions  else None
+prev_sess = sessions[-2]  if len(sessions) > 1 else None
 
 # ─────────────────────────────────────────────
 # SIDEBAR
