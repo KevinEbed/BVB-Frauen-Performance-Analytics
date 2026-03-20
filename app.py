@@ -1046,7 +1046,7 @@ with tab_overview:
                 imp_df.index = range(1, len(imp_df) + 1)
                 st.dataframe(
                     imp_df.style.background_gradient(cmap="RdYlGn", subset=["Ø Δ Z"]),
-                    use_container_width=True
+                    width='stretch'
                 )
         else:
             st.info("Lade eine zweite Session um Vergleiche zu sehen.")
@@ -1124,10 +1124,10 @@ with tab_player:
             with c1:
                 player_sessions = sorted(df[df["name"] == selected_player]["session"].unique())
                 st.plotly_chart(radar_chart(df, [selected_player], player_sessions,
-                                           title=f"{selected_player} · Radar"), use_container_width=True, key=f"player_radar_{selected_player}")
+                                           title=f"{selected_player} · Radar"), width='stretch', key=f"player_radar_{selected_player}")
             with c2:
                 st.plotly_chart(comparison_bar(df, selected_player, selected_session),
-                                use_container_width=True, key=f"player_comp_{selected_player}_{selected_session}")
+                                width='stretch', key=f"player_comp_{selected_player}_{selected_session}")
 
             st.plotly_chart(trend_chart(df, selected_player), width='stretch', key=f"player_trend_{selected_player}")
 
@@ -1145,7 +1145,7 @@ with tab_player:
                     row["Team Ø"] = round(ta, 3) if pd.notna(ta) else None
                     raw_rows.append(row)
                 raw_df = pd.DataFrame(raw_rows).set_index("Metrik")
-                st.dataframe(raw_df, use_container_width=True)
+                st.dataframe(raw_df, width='stretch')
 
             with c4:
                 st.markdown("#### Auswertung")
@@ -1182,7 +1182,7 @@ with tab_player:
                         lambda v: "color: #4ADE80" if v == "↑" else ("color: #F87171" if v == "↓" else ""),
                         subset=["Trend"]
                     ),
-                    use_container_width=True
+                    width='stretch'
                 )
 
 # ══════════════════════════════════════════════
@@ -1207,7 +1207,7 @@ with tab_compare:
         c1, c2 = st.columns(2)
         with c1:
             st.plotly_chart(radar_chart(df, selected_players, [cmp_session],
-                                       title="Radar Vergleich"), use_container_width=True, key="cmp_radar")
+                                       title="Radar Vergleich"), width='stretch', key="cmp_radar")
         with c2:
             cmp_metric = st.selectbox("Metrik", list(RAW_METRICS.keys()),
                                       format_func=lambda x: RAW_METRICS[x]["label"])
@@ -1248,7 +1248,7 @@ with tab_compare:
                 row["★ Best"] = [k.split()[-1] for k, v in vals.items() if v == best][0]
             rows.append(row)
         det_df = pd.DataFrame(rows).set_index("Metrik")
-        st.dataframe(det_df, use_container_width=True)
+        st.dataframe(det_df, width='stretch')
 
         if len(sessions) > 1:
             st.markdown("#### Zeitverlauf")
@@ -1310,7 +1310,7 @@ with tab_ranking:
 
     display_cols = ["#", "name", "Metrik"] + (["Δ vs prev"] if prev_sess else [])
     rk_display = rk_df[display_cols].rename(columns={"name": "Spielerin"}).set_index("#")
-    st.dataframe(rk_display, use_container_width=True, height=600)
+    st.dataframe(rk_display, width='stretch', height=600)
 
 
 # ══════════════════════════════════════════════
@@ -1341,7 +1341,7 @@ with tab_saeulen:
     else:
         st.plotly_chart(
             ranked_bar_chart(df, saeulen_metric, saeulen_sessions),
-            use_container_width=True,
+            width='stretch',
             key=f"saeul_main_{saeulen_metric}",
         )
 
@@ -1414,7 +1414,7 @@ with tab_flags:
             st.dataframe(
                 hm_df.style.background_gradient(cmap="RdYlGn", vmin=-20, vmax=20)
                            .format("{:.1f}", na_rep="—"),
-                use_container_width=True,
+                width='stretch',
                 height=500,
             )
 
@@ -1498,7 +1498,7 @@ with tab_squad:
 
     if squad_rows:
         squad_df = pd.DataFrame(squad_rows).set_index("Spielerin")
-        st.dataframe(squad_df, use_container_width=True)
+        st.dataframe(squad_df, width='stretch')
     else:
         st.info("Noch keine Spielerinnen. Lade eine Session um zu starten.")
     st.caption(f"**{len(players)} Spielerinnen** mit Messdaten · "
