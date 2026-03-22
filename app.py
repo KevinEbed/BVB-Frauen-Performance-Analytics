@@ -1389,8 +1389,8 @@ with tab_saeulen:
                 fig_mini = ranked_bar_chart(df, m, saeulen_sessions)
                 fig_mini.update_layout(height=320, title_font_size=12,
                                        showlegend=False,
-                                       xaxis_tickfont_size=7,
-                                       margin=dict(l=10, r=10, t=40, b=60))
+                                       xaxis_tickfont_size=7)
+                fig_mini.update_layout(margin=dict(l=10, r=10, t=40, b=60))
                 st.plotly_chart(fig_mini, width='stretch', key=f"saeul_mini_{m}")
             with col_b:
                 if i + 1 < len(metrics_list):
@@ -1398,8 +1398,8 @@ with tab_saeulen:
                     fig_mini2 = ranked_bar_chart(df, m2, saeulen_sessions)
                     fig_mini2.update_layout(height=320, title_font_size=12,
                                             showlegend=False,
-                                            xaxis_tickfont_size=7,
-                                            margin=dict(l=10, r=10, t=40, b=60))
+                                            xaxis_tickfont_size=7)
+                    fig_mini2.update_layout(margin=dict(l=10, r=10, t=40, b=60))
                     st.plotly_chart(fig_mini2, width='stretch', key=f"saeul_mini_{m2}")
 
 # ══════════════════════════════════════════════
@@ -1519,11 +1519,10 @@ with tab_entwicklung:
         xgap=2, ygap=2,
     ))
     fig_heat.update_layout(
-        **PLOTLY_LAYOUT,
+        **{**PLOTLY_LAYOUT, "margin": dict(l=160, r=80, t=60, b=20)},
         height=max(400, len(all_players_heat) * 28 + 100),
         xaxis=dict(side="top", tickfont=dict(color="#aaa", size=11)),
         yaxis=dict(tickfont=dict(color="#aaa", size=10), autorange="reversed"),
-        margin=dict(l=160, r=80, t=60, b=20),
         title=dict(text="Mannschaft · Z-Score Heatmap (alle Sessions)",
                    font_color="#FDE000", font_size=13),
     )
@@ -1698,7 +1697,7 @@ with tab_entwicklung:
                                     annotation_text="k=4 gewählt",
                                     annotation_font_color="#60A5FA")
                 fig_elbow.update_layout(
-                    **PLOTLY_LAYOUT,
+                    **{**PLOTLY_LAYOUT, "margin": dict(l=60, r=20, t=20, b=60)},
                     height=280,
                     xaxis=dict(title="Anzahl Cluster (k)",
                                tickfont=dict(color="#777"),
@@ -1706,7 +1705,6 @@ with tab_entwicklung:
                     yaxis=dict(title="W (Within-Cluster SS)",
                                tickfont=dict(color="#777"),
                                gridcolor="#1a1a1a"),
-                    margin=dict(l=60, r=20, t=20, b=60),
                 )
                 st.plotly_chart(fig_elbow, width="stretch", key="elbow_plot")
             else:
