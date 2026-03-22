@@ -13,6 +13,7 @@ from plotly.subplots import make_subplots
 from scipy import stats
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
+from sklearn.preprocessing import MinMaxScaler
 import io
 import os
 from pathlib import Path
@@ -57,6 +58,31 @@ RAW_METRICS = {
 }
 RADAR_METRICS = ["cmj", "dj_rsi", "t5", "t10", "t20", "agility", "dribbling", "vo2max"]
 RADAR_LABELS  = ["CMJ", "DJ RSI", "t5", "t10", "t20", "Agility", "Dribbling", "VO2max"]
+
+# Historical reference MW/SD seit Jul 2023 (from Zusammenfassung_1_Mannschaft.xlsx)
+# Used for player radar Z-scores — more meaningful than session-relative Z
+HIST_MW = {
+    "cmj": 31.780, "dj_rsi": 1.630, "t5": 1.082, "t10": 1.884,
+    "t20": 3.329,  "t30": 4.660, "agility": 16.332,
+    "dribbling": 10.331, "vo2max": 49.538,
+}
+HIST_SD = {
+    "cmj": 4.160, "dj_rsi": 0.294, "t5": 0.046, "t10": 0.073,
+    "t20": 0.132, "t30": 0.192, "agility": 0.663,
+    "dribbling": 0.639, "vo2max": 4.378,
+}
+
+def hist_z(metric: str, value) -> float:
+    """Z-score vs historical mean (Jul 2023–present). Same formula as Benedikt's Netzdiagramme."""
+    if value is None or pd.isna(value):
+        return None
+    info = RAW_METRICS.get(metric, {})
+    sign = 1 if info.get("hib", True) else -1
+    mw   = HIST_MW.get(metric)
+    sd   = HIST_SD.get(metric)
+    if mw is None or sd is None or sd == 0:
+        return None
+    return round(100 + 10 * sign * (float(value) - mw) / sd, 1)
 
 BVB_YELLOW = "#FDE000"
 COLORS = ["#FDE000", "#60A5FA", "#4ADE80", "#FB923C", "#C084FC", "#F472B6"]
@@ -359,10 +385,11 @@ def radar_chart(df: pd.DataFrame, names: list, sessions: list = None, title: str
             if rec.empty:
                 continue
             rec = rec.iloc[0]
-            vals = [rec.get(f"{m}_Z", np.nan) for m in RADAR_METRICS]
-            if all(pd.isna(v) for v in vals):
+            # Use historical Z-scores (vs MW seit 2023) — matches Benedikt's Netzdiagramme
+            vals = [hist_z(m, rec.get(m)) for m in RADAR_METRICS]
+            if all(v is None for v in vals):
                 continue
-            vals_clean = [v if pd.notna(v) else 0 for v in vals]
+            vals_clean = [v if v is not None else 100 for v in vals]
             color = palette[ni % len(palette)] if len(names) > 1 else palette[si % len(palette)]
             label = f"{name} · {sess}" if len(names) > 1 else sess
             opacity = 1.0 if si == len(sessions) - 1 else 0.5
@@ -374,14 +401,17 @@ def radar_chart(df: pd.DataFrame, names: list, sessions: list = None, title: str
                 line=dict(color=color, width=2.5 if opacity == 1.0 else 1.5),
                 opacity=opacity,
                 name=label,
-                hovertemplate="%{theta}: %{r:.1f}<extra>" + label + "</extra>",
+                hovertemplate="%{theta}: Z=%{r:.1f}<extra>" + label + "</extra>",
             ))
     fig.update_layout(
         **PLOTLY_LAYOUT,
         title=dict(text=title, font_color="#FDE000", font_size=14),
         polar=dict(
             bgcolor="#111",
-            radialaxis=dict(visible=True, range=[70, 135], showticklabels=False,
+            radialaxis=dict(visible=True, range=[70, 135], showticklabels=True,
+                            tickvals=[80, 90, 100, 110, 120],
+                            ticktext=["80", "90", "100", "110", "120"],
+                            tickfont=dict(size=8, color="#444"),
                             gridcolor="#1e1e1e", linecolor="#2a2a2a"),
             angularaxis=dict(gridcolor="#1e1e1e", linecolor="#2a2a2a",
                              tickfont=dict(color="#666", size=11)),
@@ -907,7 +937,7 @@ db = st.session_state.db
 
 # Load fresh from DB on every run — persistent across restarts
 df        = get_df()
-sessions  = sorted(df["session"].unique().tolist())
+sessions  = db.get_sessions()  # chronological order from DB
 players   = sorted(df[df["cmj"].notna()]["name"].unique().tolist())
 last_sess = sessions[-1] if sessions else None
 prev_sess = sessions[-2] if len(sessions) > 1 else None
@@ -979,13 +1009,14 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 # MAIN TABS
 # ─────────────────────────────────────────────
-tab_overview, tab_player, tab_compare, tab_ranking, tab_saeulen, tab_flags, tab_pdf, tab_squad = st.tabs([
+tab_overview, tab_player, tab_compare, tab_ranking, tab_saeulen, tab_flags, tab_entwicklung, tab_pdf, tab_squad = st.tabs([
     "📊 Überblick",
     "👤 Spielerin",
     "⚡ Vergleich",
     "🏆 Rankings",
     "📊 Säulendiagramme",
     "🚨 Verletzungsrisiko",
+    "🗺 Entwicklung",
     "📄 PDF Reports",
     "👥 Spielerinnen",
 ])
@@ -1417,6 +1448,270 @@ with tab_flags:
                 width='stretch',
                 height=500,
             )
+
+# ══════════════════════════════════════════════
+# ENTWICKLUNG — HEATMAP + ARCHETYPES
+# (inspired by Bedarf 2025: Clustering of Physical Match Demands)
+# ══════════════════════════════════════════════
+with tab_entwicklung:
+    st.markdown("### 🗺 Team-Entwicklung · Überblick")
+    st.caption(
+        "Jede Zelle zeigt den mittleren Z-Score einer Spielerin in einer Session "
+        "(Referenz: historischer Mannschaftsdurchschnitt seit 2023). "
+        "Grau = nicht teilgenommen."
+    )
+
+    # ── Build Z-score heatmap matrix ──────────────────────────────────
+    all_players_heat = sorted(df["name"].unique())
+    all_sessions_heat = sessions  # already chronological from DB
+
+    # Compute mean historical Z per player×session
+    heatmap_vals = {}
+    for p in all_players_heat:
+        for s in all_sessions_heat:
+            rec = df[(df["name"] == p) & (df["session"] == s)]
+            if rec.empty:
+                heatmap_vals[(p, s)] = None
+            else:
+                row = rec.iloc[0]
+                zvals = [hist_z(m, row.get(m)) for m in RADAR_METRICS
+                         if row.get(m) is not None and pd.notna(row.get(m))]
+                heatmap_vals[(p, s)] = round(np.mean(zvals), 1) if zvals else None
+
+    # Build plotly heatmap
+    z_matrix = []
+    text_matrix = []
+    for p in all_players_heat:
+        row_z, row_t = [], []
+        for s in all_sessions_heat:
+            v = heatmap_vals.get((p, s))
+            row_z.append(v if v is not None else float("nan"))
+            row_t.append(f"{v:.1f}" if v is not None else "—")
+        z_matrix.append(row_z)
+        text_matrix.append(row_t)
+
+    fig_heat = go.Figure(go.Heatmap(
+        z=z_matrix,
+        x=all_sessions_heat,
+        y=all_players_heat,
+        text=text_matrix,
+        texttemplate="%{text}",
+        textfont=dict(size=10, color="white"),
+        colorscale=[
+            [0.0,  "#8B0000"],   # Z<90  → dark red (weak)
+            [0.25, "#C0392B"],   # Z=90  → red
+            [0.45, "#555555"],   # Z=97  → grey (average)
+            [0.55, "#555555"],   # Z=103 → grey
+            [0.75, "#1E8449"],   # Z=110 → green
+            [1.0,  "#0B5345"],   # Z≥120 → dark green (excellent)
+        ],
+        zmin=85, zmax=120,
+        showscale=True,
+        colorbar=dict(
+            title="Z-Score",
+            tickvals=[85, 90, 97, 103, 110, 120],
+            ticktext=["<90", "90", "97 (Ø)", "103", "110", ">120"],
+            tickfont=dict(color="#888", size=9),
+            thickness=12,
+        ),
+        hoverongaps=False,
+        hovertemplate="<b>%{y}</b><br>Session: %{x}<br>Z-Score: %{text}<extra></extra>",
+        xgap=2, ygap=2,
+    ))
+    fig_heat.update_layout(
+        **PLOTLY_LAYOUT,
+        height=max(400, len(all_players_heat) * 28 + 100),
+        xaxis=dict(side="top", tickfont=dict(color="#aaa", size=11)),
+        yaxis=dict(tickfont=dict(color="#aaa", size=10), autorange="reversed"),
+        margin=dict(l=160, r=80, t=60, b=20),
+        title=dict(text="Mannschaft · Z-Score Heatmap (alle Sessions)",
+                   font_color="#FDE000", font_size=13),
+    )
+    st.plotly_chart(fig_heat, width="stretch", key="entwicklung_heatmap")
+
+    # ── Legend ────────────────────────────────────────────────────────
+    col1, col2, col3, col4, col5 = st.columns(5)
+    for col, label, color in [
+        (col1, "Sehr gut  ≥110", "#1E8449"),
+        (col2, "Gut  103–110",   "#2ECC71"),
+        (col3, "Ø  97–103",      "#555555"),
+        (col4, "Unter Ø  90–97", "#C0392B"),
+        (col5, "Schwach  <90",   "#8B0000"),
+    ]:
+        col.markdown(
+            f'<div style="background:{color};padding:6px 10px;border-radius:4px;'
+            f'text-align:center;color:white;font-size:11px">{label}</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.divider()
+
+    # ── Cluster archetypes (inspired by Bedarf 2025 §4.2.3) ──────────
+    st.markdown("### 🏷 Leistungsprofile · Session-Analyse")
+    st.caption(
+        "K-Means Clustering (k=4) analog zu Bedarf (2025): jede Spielerin wird "
+        "ihrer dominanten Leistungsgruppe zugeordnet. "
+        "Methode: Hartigan-Wong, Standardisierung per Z-Score, n_init=50."
+    )
+
+    arch_sess = st.selectbox("Session", sessions, index=len(sessions)-1,
+                              key="arch_sess")
+
+    sess_arch_df = df[(df["session"] == arch_sess) & df["cmj"].notna()].copy()
+    metrics_for_cluster = [m for m in RADAR_METRICS
+                           if sess_arch_df[m].notna().sum() >= 4]
+    X_raw = sess_arch_df[metrics_for_cluster].dropna()
+
+    if len(X_raw) < 4:
+        st.info("Zu wenige Spielerinnen mit vollständigen Daten für Clustering.")
+    else:
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.cluster import KMeans as _KMeans
+
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X_raw)
+        n_clusters = min(4, len(X_raw))
+        km = _KMeans(n_clusters=n_clusters, n_init=50, random_state=42)
+        labels = km.fit_predict(X_scaled)
+        centroids = pd.DataFrame(km.cluster_centers_, columns=metrics_for_cluster)
+
+        # Name clusters by their dominant trait (paper §4.2.3 approach)
+        ARCHETYPE_COLORS = {
+            "🏃 Ausdauer":      "#60A5FA",
+            "⚡ Explosiv":      "#FDE000",
+            "🚀 Sprint-stark":  "#4ADE80",
+            "📊 Ausgewogen":    "#FB923C",
+        }
+        def name_cluster(c_idx):
+            row = centroids.loc[c_idx]
+            # Higher sprint/speed metrics = sprint-dominant
+            speed = row.get("t5", 0)   # lower = better, so negate
+            jump  = row.get("cmj", 0)
+            vo2   = row.get("vo2max", 0)
+            rsi   = row.get("dj_rsi", 0)
+            # Compare to other clusters
+            all_speed  = centroids.get("t5",   pd.Series([0]*n_clusters)).tolist()
+            all_jump   = centroids.get("cmj",  pd.Series([0]*n_clusters)).tolist()
+            all_vo2    = centroids.get("vo2max",pd.Series([0]*n_clusters)).tolist()
+            if speed == min(all_speed):   return "🚀 Sprint-stark"   # fastest
+            if vo2   == max(all_vo2):     return "🏃 Ausdauer"       # best VO2
+            if jump  == max(all_jump):    return "⚡ Explosiv"        # highest CMJ
+            return "📊 Ausgewogen"
+
+        archetype_map = {c: name_cluster(c) for c in range(n_clusters)}
+
+        valid_players = sess_arch_df.loc[X_raw.index].copy()
+        valid_players["archetype"] = [archetype_map[l] for l in labels]
+        valid_players["cluster"]   = labels
+
+        # Show as colored player cards
+        arch_groups = valid_players.groupby("archetype")
+        cols_arch = st.columns(min(4, len(arch_groups)))
+
+        for ci, (arch, group) in enumerate(sorted(arch_groups)):
+            color = ARCHETYPE_COLORS.get(arch, "#888")
+            with cols_arch[ci % len(cols_arch)]:
+                st.markdown(
+                    f'<div style="background:{color}20;border:1px solid {color};'
+                    f'border-radius:8px;padding:10px;margin-bottom:8px">'
+                    f'<div style="color:{color};font-weight:bold;font-size:14px;'
+                    f'margin-bottom:6px">{arch}</div>' +
+                    "".join(
+                        f'<div style="color:#ccc;font-size:12px;padding:2px 0">'
+                        f'• {row["name"]}</div>'
+                        for _, row in group.iterrows()
+                    ) + "</div>",
+                    unsafe_allow_html=True,
+                )
+
+        st.divider()
+
+        # ── Centroid radar (Figure 2 equivalent) ──────────────────────
+        st.markdown("#### Cluster-Profil-Radar (nach Bedarf 2025, Fig. 2)")
+        st.caption("Min-Max skaliert: beste Spielgruppe = äußerer Rand, schwächste = Mitte.")
+
+        # Min-max scale centroids (Equation 18 from paper)
+        scaler_mm = MinMaxScaler()
+        centroids_scaled = pd.DataFrame(
+            scaler_mm.fit_transform(centroids),
+            columns=metrics_for_cluster,
+        )
+        radar_labels_arch = [RAW_METRICS[m]["label"] for m in metrics_for_cluster]
+        arch_palette = ["#60A5FA","#FDE000","#4ADE80","#FB923C"]
+
+        fig_arch_radar = go.Figure()
+        for c_idx in range(n_clusters):
+            arch = archetype_map[c_idx]
+            vals = centroids_scaled.loc[c_idx].tolist()
+            vals_closed = vals + [vals[0]]
+            labels_closed = radar_labels_arch + [radar_labels_arch[0]]
+            color = arch_palette[c_idx]
+            fig_arch_radar.add_trace(go.Scatterpolar(
+                r=vals_closed, theta=labels_closed,
+                fill="toself",
+                fillcolor=hex_rgba(color, 0.08),
+                line=dict(color=color, width=2),
+                name=arch,
+                hovertemplate="%{theta}: %{r:.2f}<extra>" + arch + "</extra>",
+            ))
+        fig_arch_radar.update_layout(
+            **PLOTLY_LAYOUT,
+            polar=dict(
+                bgcolor="#111",
+                radialaxis=dict(visible=True, range=[0, 1],
+                                showticklabels=False,
+                                gridcolor="#222", linecolor="#333"),
+                angularaxis=dict(gridcolor="#1e1e1e", linecolor="#2a2a2a",
+                                 tickfont=dict(color="#666", size=11)),
+            ),
+            legend=dict(font_color="#888", bgcolor="rgba(0,0,0,0)"),
+            height=380,
+            title=dict(text=f"Cluster-Profil · {arch_sess}",
+                       font_color="#FDE000", font_size=13),
+        )
+        st.plotly_chart(fig_arch_radar, width="stretch", key="arch_radar")
+
+        # ── Elbow plot ─────────────────────────────────────────────────
+        with st.expander("📐 Elbow-Methode · Optimale Cluster-Anzahl (Bedarf 2025, Fig. 1)"):
+            st.caption(
+                "Die Within-Cluster Sum of Squares (W) für k=2 bis k=8. "
+                "Der 'Ellbogen' zeigt die optimale Cluster-Anzahl — "
+                "gewählt: k=4 (nach Bedarf 2025)."
+            )
+            if len(X_raw) >= 8:
+                k_range = range(2, min(9, len(X_raw)))
+                wcss = []
+                for k in k_range:
+                    km_k = _KMeans(n_clusters=k, n_init=20, random_state=42)
+                    km_k.fit(X_scaled)
+                    wcss.append(km_k.inertia_)
+
+                fig_elbow = go.Figure(go.Scatter(
+                    x=list(k_range), y=wcss,
+                    mode="lines+markers",
+                    line=dict(color="#FDE000", width=2),
+                    marker=dict(color="#FDE000", size=8),
+                    hovertemplate="k=%{x}: W=%{y:.0f}<extra></extra>",
+                ))
+                fig_elbow.add_vline(x=4, line_dash="dash",
+                                    line_color="#60A5FA",
+                                    annotation_text="k=4 gewählt",
+                                    annotation_font_color="#60A5FA")
+                fig_elbow.update_layout(
+                    **PLOTLY_LAYOUT,
+                    height=280,
+                    xaxis=dict(title="Anzahl Cluster (k)",
+                               tickfont=dict(color="#777"),
+                               gridcolor="#1a1a1a"),
+                    yaxis=dict(title="W (Within-Cluster SS)",
+                               tickfont=dict(color="#777"),
+                               gridcolor="#1a1a1a"),
+                    margin=dict(l=60, r=20, t=20, b=60),
+                )
+                st.plotly_chart(fig_elbow, width="stretch", key="elbow_plot")
+            else:
+                st.info("Zu wenige Spielerinnen für Elbow-Plot (min. 8 benötigt).")
+
 
 # ══════════════════════════════════════════════
 # PDF REPORTS
