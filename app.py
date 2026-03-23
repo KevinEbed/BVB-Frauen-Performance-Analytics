@@ -483,13 +483,18 @@ def comparison_bar(df: pd.DataFrame, name: str, session: str) -> go.Figure:
     team = df[(df["session"] == session) & df["cmj"].notna()]
     labels, player_vals, team_vals = [], [], []
     for m in RADAR_METRICS:
-        zk = f"{m}_Z"
-        pz = rec.get(zk)
-        tz = team[zk].mean() if zk in team.columns else np.nan
-        if pd.notna(pz):
+        # Use historical Z-scores for meaningful comparison
+        pz = hist_z(m, rec.get(m))
+        if pz is not None:
+            # Team average Z for this session
+            team_metric_vals = pd.to_numeric(team[m], errors="coerce").dropna()
+            if len(team_metric_vals) > 0:
+                tz = np.mean([hist_z(m, v) for v in team_metric_vals if hist_z(m, v) is not None])
+            else:
+                tz = 100
             labels.append(RAW_METRICS[m]["label"])
             player_vals.append(pz)
-            team_vals.append(tz if pd.notna(tz) else 100)
+            team_vals.append(tz if tz is not None else 100)
     fig = go.Figure()
     fig.add_trace(go.Bar(
         y=labels, x=team_vals, name="Team Ø",
@@ -906,7 +911,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
                     row_data.append(Paragraph(fmt(v, dec) if v is not None else "X", BODY))
                 rows.append(row_data)
 
-            t = Table(rows, colWidths=col_w_ranked)
+            t = Table(rows, colWidths=col_w_ranked, repeatRows=1)
             # Highlight best/worst
             style_cmds = [
                 ("BACKGROUND",  (0,0), (-1,0), DGRAY),
@@ -972,7 +977,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
                         row_data.append(Paragraph(fmt(v, dec) if pd.notna(v) else "X", BODY))
                 rows.append(row_data)
 
-        t = Table(rows, colWidths=col_w_p)
+        t = Table(rows, colWidths=col_w_p, repeatRows=1)
         t.setStyle(TableStyle([
             ("BACKGROUND",  (0,0), (-1,0), DGRAY),
             ("TEXTCOLOR",   (0,0), (-1,0), BVB_Y),
@@ -1159,15 +1164,26 @@ with st.sidebar:
 
     st.divider()
     # Remove uploaded (non-seed) sessions
-    removable = [s for s in sessions if s not in {"Jan 26", "Mär 26"}]
-    if removable:
-        to_remove = st.selectbox("Session entfernen", ["—"] + removable)
+    if sessions:
+        to_remove = st.selectbox("Session entfernen", ["—"] + sessions)
         if st.button("🗑 Entfernen") and to_remove != "—":
             db.delete_session(to_remove)
             st.rerun()
 
     st.divider()
     st.caption(f"v1.0 · {len(sessions)} Sessions · {len(players)} Spielerinnen")
+    
+    # Show Supabase fix reminder if RSI looks wrong
+    if not df.empty and "dj_rsi" in df.columns:
+        sample_rsi = df["dj_rsi"].dropna()
+        if len(sample_rsi) > 0 and sample_rsi.mean() > 10:
+            st.warning(
+                "⚠️ RSI-Werte scheinen falsch (>10). "
+                "Bitte in Supabase SQL ausführen:\n"
+                "```sql\nUPDATE measurements\n"
+                "SET dj_rsi = ROUND((dvj_hoehe::numeric/100)/(dvj_kontaktzeit::numeric/1000),3)\n"
+                "WHERE dvj_kontaktzeit IS NOT NULL AND dvj_hoehe IS NOT NULL;\n```"
+            )
 
 # ─────────────────────────────────────────────
 # MAIN TABS

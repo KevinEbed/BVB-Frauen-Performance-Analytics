@@ -20,6 +20,29 @@ import numpy as np
 from datetime import datetime, date
 from pathlib import Path
 
+import re as _re
+
+_MONTH_MAP = {
+    'jan': 1, 'feb': 2, 'mär': 3, 'mar': 3, 'apr': 4,
+    'mai': 5, 'may': 5, 'jun': 6, 'jul': 7, 'aug': 8,
+    'sep': 9, 'okt': 10, 'oct': 10, 'nov': 11, 'dez': 12, 'dec': 12,
+}
+
+def parse_session_date(label: str):
+    """Convert 'Jan 26' → '2026-01-01', 'Mär 26' → '2026-03-01' etc."""
+    m = _re.match(r'([a-zA-Zäöü]+)\s+(\d{2,4})', label.strip())
+    if m:
+        month_str = m.group(1).lower()[:3]
+        year_str  = m.group(2)
+        month = _MONTH_MAP.get(month_str)
+        if month:
+            year = int(year_str)
+            if year < 100:
+                year += 2000
+            return f"{year:04d}-{month:02d}-01"
+    return None
+
+
 # ─────────────────────────────────────────────────────────
 # SEED DATA  (Jan 26 + Mär 26)
 # ─────────────────────────────────────────────────────────
@@ -191,7 +214,8 @@ class BVBDatabase:
 
         kz = rec.get("dvj_kontaktzeit")
         hh = rec.get("dvj_hoehe")
-        dj_rsi = round(hh / kz * 1000, 3) if kz and hh and kz > 0 else None
+        # RSI = height(m) / contact_time(s) = (hh_cm/100) / (kz_ms/1000)
+        dj_rsi = round((hh / 100) / (kz / 1000), 3) if kz and hh and kz > 0 else None
 
         def best_time(*vals):
             v = [x for x in vals if x is not None and x > 0]
@@ -204,9 +228,18 @@ class BVBDatabase:
         agility   = best_time(rec.get("agility_r1"),   rec.get("agility_r2"))
         dribbling = best_time(rec.get("dribbling_r1"), rec.get("dribbling_r2"))
 
-        lv = rec.get("yoyo_level")
-        sh = rec.get("yoyo_shuttles")
-        vo2max = round(lv * 4.225 + sh * 0.682, 2) if lv is not None and sh is not None else None
+        # Use pre-computed VO2max from Excel if available (col 23 in Frauen_I)
+        # Fall back to formula only if not provided
+        vo2max = rec.get("vo2max") or rec.get("vo2max_computed")
+        if vo2max is not None:
+            try:
+                vo2max = round(float(vo2max), 2)
+            except:
+                vo2max = None
+        if vo2max is None:
+            lv = rec.get("yoyo_level")
+            sh = rec.get("yoyo_shuttles")
+            vo2max = round(lv * 4.225 + sh * 0.682, 2) if lv is not None and sh is not None else None
 
         conn = self._connect()
         cur  = conn.cursor()
@@ -354,16 +387,19 @@ class BVBDatabase:
             if not name or len(name) < 2:
                 continue
 
-            # Upsert session
+            # Upsert session — auto-parse date from label for correct ordering
+            auto_date = parse_session_date(label)
             if self.use_postgres:
                 cur.execute(
-                    f"INSERT INTO sessions (label) VALUES ({ph}) "
-                    f"ON CONFLICT(label) DO NOTHING",
-                    (label,)
+                    f"INSERT INTO sessions (label, session_date) VALUES ({ph},{ph}) "
+                    f"ON CONFLICT(label) DO UPDATE SET "
+                    f"session_date=COALESCE(sessions.session_date, excluded.session_date)",
+                    (label, auto_date)
                 )
             else:
                 cur.execute(
-                    "INSERT OR IGNORE INTO sessions (label) VALUES (?)", (label,)
+                    "INSERT OR IGNORE INTO sessions (label, session_date) VALUES (?,?)",
+                    (label, auto_date)
                 )
 
             # Upsert player
@@ -505,9 +541,21 @@ class BVBDatabase:
             ])
 
     def get_sessions(self) -> list:
+        """Returns sessions in chronological order. Backfills dates from labels if missing."""
         conn = self._connect()
         cur  = conn.cursor()
-        cur.execute("SELECT label FROM sessions ORDER BY session_date, label")
+        # Backfill session_date for any sessions that have NULL dates
+        cur.execute("SELECT id, label FROM sessions WHERE session_date IS NULL")
+        for row in cur.fetchall():
+            sid, label = row[0], row[1]
+            auto_date = parse_session_date(label)
+            if auto_date:
+                ph = self._ph()
+                cur.execute(f"UPDATE sessions SET session_date={ph} WHERE id={ph}",
+                            (auto_date, sid))
+        conn.commit()
+        # Order by date first, then label as tiebreaker
+        cur.execute("SELECT label FROM sessions ORDER BY session_date NULLS LAST, label")
         rows = [r[0] for r in cur.fetchall()]
         conn.close()
         return rows
