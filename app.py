@@ -1387,7 +1387,7 @@ with tab_player:
             if pred_rows:
                 pred_df = pd.DataFrame(pred_rows).set_index("Metrik")
                 st.dataframe(
-                    pred_df.style.applymap(
+                    pred_df.style.map(
                         lambda v: "color: #4ADE80" if v == "↑" else ("color: #F87171" if v == "↓" else ""),
                         subset=["Trend"]
                     ),
