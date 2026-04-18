@@ -703,391 +703,1062 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
 # ─────────────────────────────────────────────
 # PDF REPORT
 # ─────────────────────────────────────────────
-def _pdf_metric_groups():
-    """Grouped metric definitions matching the Auswertung document layout."""
-    return [
-        ("20m Sprint", [
-            ("t5",       "t5 [s]"),
-            ("t10",      "t10 [s]"),
-            ("t20",      "t20 [s]"),
-            ("t30",      "t30 [s]"),
-        ]),
-        ("Sprungkraft", [
-            ("cmj",      "CMJ [cm]"),
-            ("dj_rsi",   "DJ [RSI]"),
-        ]),
-        ("Agility Illinois Test", [
-            ("agility",  "t [s]"),
-        ]),
-        ("Dribbling Test", [
-            ("dribbling","t [s]"),
-        ]),
-        ("Yo-Yo Test", [
-            ("vo2max",   "VO2max [ml·kg⁻¹·min⁻¹]"),
-        ]),
+# ─────────────────────────────────────────────
+# PDF ENGINE  (elite report generator)
+# ─────────────────────────────────────────────
+"""
+BVB Frauen — Elite PDF Report Engine
+======================================
+Replaces generate_team_pdf() and generate_player_pdf().
+Charts rendered via Matplotlib → PNG → embedded in ReportLab PDF.
+"""
+
+import io
+import math
+import tempfile
+import os
+import numpy as np
+import pandas as pd
+from datetime import datetime
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.patches import FancyBboxPatch
+
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.units import cm, mm
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+    HRFlowable, PageBreak, Image, KeepTogether
+)
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.pdfgen import canvas as rl_canvas
+
+
+# ── CONSTANTS ─────────────────────────────────────────────────────────────────
+BVB_Y   = colors.HexColor("#FDE000")
+BVB_BK  = colors.HexColor("#0A0A0A")
+BVB_DG  = colors.HexColor("#1A1A1A")
+DGRAY   = colors.HexColor("#2D2D2D")
+MGRAY   = colors.HexColor("#555555")
+LGRAY   = colors.HexColor("#F0F0F0")
+WHITE   = colors.white
+GREEN   = colors.HexColor("#22C55E")
+RED     = colors.HexColor("#EF4444")
+AMBER   = colors.HexColor("#F59E0B")
+BLUE    = colors.HexColor("#3B82F6")
+
+W_PAGE  = A4[0]
+H_PAGE  = A4[1]
+MARGIN  = 1.5 * cm
+W_BODY  = W_PAGE - 2 * MARGIN   # ≈ 18.2 cm
+
+MPL_BG   = "#0A0A0A"
+MPL_BG2  = "#111111"
+MPL_GRID = "#222222"
+MPL_TXT  = "#AAAAAA"
+MPL_Y    = "#FDE000"
+MPL_DARK = "#2D2D2D"
+
+HIST_MW = {
+    "cmj":31.780,"dj_rsi":1.630,"t5":1.082,"t10":1.884,
+    "t20":3.329,"t30":4.660,"agility":16.332,
+    "dribbling":10.331,"vo2max":49.538,
+}
+HIST_SD = {
+    "cmj":4.160,"dj_rsi":0.294,"t5":0.046,"t10":0.073,
+    "t20":0.132,"t30":0.192,"agility":0.663,
+    "dribbling":0.639,"vo2max":4.378,
+}
+HIB = {
+    "cmj":True,"dj_rsi":True,"t5":False,"t10":False,
+    "t20":False,"t30":False,"agility":False,
+    "dribbling":False,"vo2max":True,
+}
+METRIC_LABELS = {
+    "cmj":"CMJ [cm]","dj_rsi":"DJ RSI","t5":"t5 [s]","t10":"t10 [s]",
+    "t20":"t20 [s]","t30":"t30 [s]","agility":"Agility [s]",
+    "dribbling":"Dribbling [s]","vo2max":"VO2max",
+}
+DEC_MAP = {
+    "cmj":1,"dj_rsi":2,"t5":2,"t10":2,
+    "t20":2,"t30":2,"agility":2,"dribbling":2,"vo2max":2,
+}
+
+# Radar axis groupings (6-axis radar)
+RADAR_AXES = {
+    "Sprint":     ["t5", "t10"],
+    "Acceleration": ["t20", "t30"],
+    "Power":      ["cmj"],
+    "Reactivity": ["dj_rsi"],
+    "Endurance":  ["vo2max"],
+    "Agility & Technique": ["agility", "dribbling"],
+}
+RADAR_LABELS = list(RADAR_AXES.keys())
+
+
+# ── HELPERS ───────────────────────────────────────────────────────────────────
+
+def fmt(v, dec=2):
+    if v is None or (isinstance(v, float) and (math.isnan(v) or math.isinf(v))):
+        return "—"
+    return f"{v:.{dec}f}".replace(".", ",")
+
+
+def hist_z(metric, value):
+    if value is None or pd.isna(value):
+        return None
+    sign = 1 if HIB.get(metric, True) else -1
+    mw, sd = HIST_MW.get(metric), HIST_SD.get(metric)
+    if not mw or not sd or sd == 0:
+        return None
+    return round(100 + 10 * sign * (float(value) - mw) / sd, 1)
+
+
+def z_to_badge(z):
+    if z is None:
+        return "—", "#555555"
+    if z >= 112:
+        return "ELITE", "#22C55E"
+    if z >= 104:
+        return "STRONG", "#3B82F6"
+    if z >= 96:
+        return "AVERAGE", "#888888"
+    if z >= 88:
+        return "DEVELOPING", "#F59E0B"
+    return "FOCUS AREA", "#EF4444"
+
+
+def axis_z(metrics_list, player_row):
+    """Mean hist_z for a group of metrics for one player row."""
+    vals = [hist_z(m, player_row.get(m)) for m in metrics_list]
+    vals = [v for v in vals if v is not None]
+    return round(sum(vals) / len(vals), 1) if vals else None
+
+
+def player_axis_scores(row):
+    """Returns dict of {axis_label: z_score} for the 6-axis radar."""
+    return {ax: axis_z(metrics, row) for ax, metrics in RADAR_AXES.items()}
+
+
+def style():
+    """Return shared ParagraphStyle factory dict."""
+    return {
+        "cover_title": ParagraphStyle("ct", fontName="Helvetica-Bold",
+            fontSize=26, textColor=BVB_Y, leading=32, alignment=TA_CENTER),
+        "cover_sub": ParagraphStyle("cs", fontName="Helvetica",
+            fontSize=12, textColor=WHITE, leading=18, alignment=TA_CENTER),
+        "cover_meta": ParagraphStyle("cm", fontName="Helvetica",
+            fontSize=9, textColor=MGRAY, leading=14, alignment=TA_CENTER),
+        "section": ParagraphStyle("sec", fontName="Helvetica-Bold",
+            fontSize=13, textColor=BVB_Y, leading=18, spaceBefore=14, spaceAfter=4),
+        "sub": ParagraphStyle("sub", fontName="Helvetica-Bold",
+            fontSize=10, textColor=BVB_BK, leading=13, spaceBefore=8, spaceAfter=2),
+        "body": ParagraphStyle("body", fontName="Helvetica",
+            fontSize=8.5, textColor=DGRAY, leading=12),
+        "small": ParagraphStyle("sm", fontName="Helvetica",
+            fontSize=7.5, textColor=MGRAY, leading=10),
+        "insight": ParagraphStyle("ins", fontName="Helvetica-Oblique",
+            fontSize=8, textColor=colors.HexColor("#1A3A2A"), leading=11),
+        "caption": ParagraphStyle("cap", fontName="Helvetica",
+            fontSize=7, textColor=MGRAY, leading=9, alignment=TA_CENTER),
+    }
+
+
+# ── CHART FUNCTIONS ───────────────────────────────────────────────────────────
+
+def chart_radar(player_scores: dict, team_scores: dict,
+                title="", figsize=(4.2, 4.2)) -> bytes:
+    """6-axis radar: player (yellow) vs team average (grey)."""
+    labels = RADAR_LABELS
+    N = len(labels)
+    angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
+    angles += angles[:1]
+
+    p_vals = [player_scores.get(ax, 100) or 100 for ax in labels] + \
+             [player_scores.get(labels[0], 100) or 100]
+    t_vals = [team_scores.get(ax, 100) or 100 for ax in labels] + \
+             [team_scores.get(labels[0], 100) or 100]
+
+    fig, ax = plt.subplots(figsize=figsize, subplot_kw=dict(polar=True))
+    fig.patch.set_facecolor(MPL_BG)
+    ax.set_facecolor(MPL_BG2)
+
+    ax.plot(angles, t_vals, '--', lw=1.2, color="#555555", zorder=2)
+    ax.fill(angles, t_vals, alpha=0.08, color="#555555")
+    ax.plot(angles, p_vals, 'o-', lw=2.2, color=MPL_Y, zorder=3)
+    ax.fill(angles, p_vals, alpha=0.20, color=MPL_Y)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(labels, size=7.5, color="#CCCCCC",
+                       fontweight="bold")
+    ax.set_ylim(70, 130)
+    ax.set_yticks([80, 90, 100, 110, 120])
+    ax.set_yticklabels(["80", "90", "100", "110", "120"],
+                       size=6, color="#444444")
+    ax.spines["polar"].set_color("#333333")
+    ax.grid(color=MPL_GRID, linewidth=0.6)
+
+    legend_elements = [
+        mpatches.Patch(facecolor=MPL_Y, alpha=0.6, label="Spielerin"),
+        mpatches.Patch(facecolor="#555555", alpha=0.4, label="Team Ø"),
     ]
+    ax.legend(handles=legend_elements, loc="upper right",
+              bbox_to_anchor=(1.4, 1.15), fontsize=7,
+              framealpha=0, labelcolor="white")
 
-
-def generate_team_pdf(df: pd.DataFrame) -> bytes:
-    """
-    Full team report matching the Auswertung Leistungsdiagnostik format:
-      Part 1 – Session overview tables (MW, SD, Min, Max per session)
-      Part 2 – Ranked lists per metric across all sessions
-      Part 3 – Individual player history cards
-    """
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib import colors
-    from reportlab.lib.units import cm
-    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
-                                    Table, TableStyle, HRFlowable, PageBreak)
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
-    import io, numpy as np
-
-    BVB_Y  = colors.HexColor("#FDE000")
-    BVB_BK = colors.HexColor("#0A0A0A")
-    DGRAY  = colors.HexColor("#2D2D2D")
-    LGRAY  = colors.HexColor("#F5F5F5")
-    MGRAY  = colors.HexColor("#888888")
-    WHITE  = colors.white
-    RED    = colors.HexColor("#C0392B")
-    GREEN  = colors.HexColor("#1E8449")
+    if title:
+        ax.set_title(title, color=MPL_Y, size=8, pad=16, fontweight="bold")
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4,
-                            leftMargin=1.5*cm, rightMargin=1.5*cm,
-                            topMargin=1.5*cm, bottomMargin=1.5*cm)
+    fig.savefig(buf, format="png", dpi=160, bbox_inches="tight",
+                facecolor=MPL_BG, edgecolor="none")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
 
-    styles = getSampleStyleSheet()
-    H1 = ParagraphStyle("H1", fontName="Helvetica-Bold", fontSize=16,
-                         textColor=BVB_Y, backColor=BVB_BK,
-                         leading=22, spaceAfter=6,
-                         leftIndent=6, rightIndent=6)
-    H2 = ParagraphStyle("H2", fontName="Helvetica-Bold", fontSize=12,
-                         textColor=BVB_BK, spaceAfter=4, spaceBefore=10)
-    H3 = ParagraphStyle("H3", fontName="Helvetica-Bold", fontSize=10,
-                         textColor=BVB_Y, backColor=DGRAY,
-                         leading=14, spaceAfter=2,
-                         leftIndent=4)
-    BODY = ParagraphStyle("BODY", fontName="Helvetica", fontSize=8,
-                           leading=11, textColor=BVB_BK)
-    SMALL = ParagraphStyle("SMALL", fontName="Helvetica", fontSize=7,
-                            leading=10, textColor=MGRAY)
 
-    story = []
-    W = 18*cm  # usable width
-    ALL_SESSIONS = sorted(df["session"].unique().tolist())
-    METRIC_GROUPS = _pdf_metric_groups()
-    HIB = {m: RAW_METRICS[m]["hib"] for m in RAW_METRICS}
+def chart_hbar(players: list, values: list, metric_label: str,
+               team_avg=None, highlight_idx=None,
+               figsize=None, max_n=12) -> bytes:
+    """Horizontal bar chart — ranked players."""
+    players = players[:max_n]
+    values  = values[:max_n]
+    n = len(players)
+    if figsize is None:
+        figsize = (7.0, max(1.8, n * 0.38))
 
-    def hdr(text):
-        story.append(Paragraph(text, H1))
-        story.append(Spacer(1, 0.2*cm))
+    bar_colors = []
+    for i, v in enumerate(values):
+        if i == highlight_idx:
+            bar_colors.append(MPL_Y)
+        elif i == 0:
+            bar_colors.append("#22C55E")
+        elif i == n - 1:
+            bar_colors.append("#EF4444")
+        else:
+            bar_colors.append(MPL_DARK)
 
-    def subhdr(text):
-        story.append(Spacer(1, 0.3*cm))
-        story.append(Paragraph(text, H2))
+    fig, ax = plt.subplots(figsize=figsize)
+    fig.patch.set_facecolor(MPL_BG)
+    ax.set_facecolor(MPL_BG2)
 
-    def metric_hdr(text):
-        story.append(Spacer(1, 0.2*cm))
-        story.append(Paragraph(text, H3))
+    y_pos = list(range(n))
+    bars = ax.barh([p[:20] for p in players[::-1]],
+                   values[::-1],
+                   color=bar_colors[::-1],
+                   height=0.62, edgecolor="none")
 
-    def rule():
-        story.append(HRFlowable(width="100%", thickness=1.5,
-                                 color=BVB_Y, spaceAfter=4))
+    if team_avg is not None:
+        ax.axvline(team_avg, color=MPL_Y, lw=1, ls="--",
+                   alpha=0.7, label=f"Team Ø: {team_avg:.2f}")
+        ax.legend(fontsize=7, framealpha=0, labelcolor="white",
+                  loc="lower right")
 
-    def fmt(v, dec=2):
-        if v is None or (isinstance(v, float) and np.isnan(v)):
-            return "—"
-        return f"{v:.{dec}f}".replace(".", ",")
+    for bar, val in zip(bars, values[::-1]):
+        ax.text(bar.get_width() + (max(values) - min(values)) * 0.01,
+                bar.get_y() + bar.get_height() / 2,
+                fmt(val, DEC_MAP.get(metric_label.split()[0].lower()[:3], 2)),
+                va="center", ha="left", color="#CCCCCC", size=7.5)
 
-    # ── PART 1: SESSION OVERVIEW TABLES ─────────────────────────────────
-    hdr("Auswertung Leistungsdiagnostik BVB Frauen")
-    rule()
-    subhdr("Überblick der Messzeitpunkte")
+    ax.set_xlabel(metric_label, color=MPL_TXT, size=8)
+    ax.tick_params(colors=MPL_TXT, labelsize=7.5)
+    for spine in ax.spines.values():
+        spine.set_color("#333333")
+    ax.xaxis.label.set_color(MPL_TXT)
+    ax.set_xlim(right=max(values) * 1.13)
+    plt.tight_layout(pad=0.4)
 
-    for sess in ALL_SESSIONS:
-        sess_df = df[df["session"] == sess]
-        metric_hdr(sess)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight",
+                facecolor=MPL_BG, edgecolor="none")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
 
-        col_w = [3.5*cm, 3*cm, 2.7*cm, 2.2*cm, 2.7*cm, 2.7*cm]
-        header_row = [
-            Paragraph("<b>Test</b>", BODY),
-            Paragraph("<b>Messgröße</b>", BODY),
-            Paragraph("<b>Mittelwert</b>", BODY),
-            Paragraph("<b>SD</b>", BODY),
-            Paragraph("<b>Min</b>", BODY),
-            Paragraph("<b>Max</b>", BODY),
+
+def chart_trend(player_name: str, df: pd.DataFrame,
+                metrics=None, figsize=(7.0, 2.6)) -> bytes:
+    """Multi-metric Z-score trend across sessions."""
+    if metrics is None:
+        metrics = ["cmj", "vo2max", "t20", "agility"]
+
+    p_df = df[df["name"] == player_name].sort_values("session")
+    sessions = p_df["session"].tolist()
+    if len(sessions) < 2:
+        return None
+
+    fig, ax = plt.subplots(figsize=figsize)
+    fig.patch.set_facecolor(MPL_BG)
+    ax.set_facecolor(MPL_BG2)
+
+    palette = [MPL_Y, "#22C55E", "#3B82F6", "#F59E0B",
+               "#EF4444", "#A855F7", "#EC4899", "#14B8A6"]
+    plotted = 0
+    for i, m in enumerate(metrics):
+        zvals = [hist_z(m, row[m]) for _, row in p_df.iterrows()]
+        if all(v is None for v in zvals):
+            continue
+        ax.plot(sessions, [v or np.nan for v in zvals],
+                "o-", lw=2, color=palette[i % len(palette)],
+                label=METRIC_LABELS.get(m, m), markersize=5)
+        plotted += 1
+
+    ax.axhline(100, color="#444444", lw=1, ls="--", alpha=0.7)
+    ax.set_ylim(70, 130)
+    ax.set_yticks([80, 90, 100, 110, 120])
+    ax.set_yticklabels(["80", "90", "100↑", "110", "120"], size=7, color=MPL_TXT)
+    ax.tick_params(colors=MPL_TXT, labelsize=7.5)
+    for spine in ax.spines.values():
+        spine.set_color("#333333")
+    ax.grid(axis="y", color=MPL_GRID, lw=0.5)
+    if plotted > 0:
+        ax.legend(fontsize=6.5, framealpha=0, labelcolor="white",
+                  loc="upper left", ncol=4)
+    plt.tight_layout(pad=0.4)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight",
+                facecolor=MPL_BG, edgecolor="none")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+def chart_percentile_bar(player_name: str, df: pd.DataFrame,
+                         session: str, figsize=(7.0, 3.0)) -> bytes:
+    """Show player Z-score per metric vs 100 baseline — percentile style."""
+    p_row = df[(df["name"] == player_name) & (df["session"] == session)]
+    if p_row.empty:
+        return None
+    row = p_row.iloc[0]
+
+    metrics_to_show = ["cmj", "dj_rsi", "t5", "t20", "agility", "dribbling", "vo2max"]
+    labels, zscores, bar_colors = [], [], []
+
+    for m in metrics_to_show:
+        z = hist_z(m, row.get(m))
+        if z is None:
+            continue
+        labels.append(METRIC_LABELS.get(m, m))
+        zscores.append(z)
+        if z >= 110:
+            bar_colors.append("#22C55E")
+        elif z >= 100:
+            bar_colors.append("#3B82F6")
+        elif z >= 90:
+            bar_colors.append(MPL_DARK)
+        else:
+            bar_colors.append("#EF4444")
+
+    if not labels:
+        return None
+
+    fig, ax = plt.subplots(figsize=figsize)
+    fig.patch.set_facecolor(MPL_BG)
+    ax.set_facecolor(MPL_BG2)
+
+    x = np.arange(len(labels))
+    bars = ax.bar(x, zscores, color=bar_colors, width=0.6, edgecolor="none")
+    ax.axhline(100, color=MPL_Y, lw=1.2, ls="--", alpha=0.8, label="Team Ø (Z=100)")
+
+    for bar, z in zip(bars, zscores):
+        ax.text(bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.5,
+                f"{z:.0f}", ha="center", va="bottom",
+                color="#CCCCCC", size=7.5, fontweight="bold")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, size=7.5, color=MPL_TXT, rotation=20, ha="right")
+    ax.set_ylim(70, max(130, max(zscores) + 10))
+    ax.set_ylabel("Z-Score", color=MPL_TXT, size=8)
+    ax.tick_params(colors=MPL_TXT, labelsize=7.5)
+    for spine in ax.spines.values():
+        spine.set_color("#333333")
+    ax.legend(fontsize=7, framealpha=0, labelcolor="white", loc="upper right")
+    plt.tight_layout(pad=0.4)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight",
+                facecolor=MPL_BG, edgecolor="none")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+# ── REPORTLAB HELPERS ──────────────────────────────────────────────────────────
+
+def img_flowable(png_bytes: bytes, width_cm=16.0) -> Image:
+    w = width_cm * cm
+    img = Image(io.BytesIO(png_bytes))
+    aspect = img.imageWidth / img.imageHeight
+    return Image(io.BytesIO(png_bytes), width=w, height=w / aspect)
+
+
+def rl_rule(story, color=BVB_Y, thickness=1.5):
+    story.append(HRFlowable(width="100%", thickness=thickness,
+                             color=color, spaceAfter=4, spaceBefore=4))
+
+
+def rl_section(story, text, S):
+    story.append(Spacer(1, 0.25 * cm))
+    story.append(Paragraph(text.upper(), S["section"]))
+    rl_rule(story)
+
+
+def rl_sub(story, text, S):
+    story.append(Paragraph(text, S["sub"]))
+
+
+def styled_table(rows, col_widths, header_rows=1, zebra=True,
+                 best_row=None, worst_row=None):
+    t = Table(rows, colWidths=col_widths, repeatRows=header_rows)
+    cmds = [
+        ("BACKGROUND",   (0, 0), (-1, header_rows - 1), BVB_DG),
+        ("TEXTCOLOR",    (0, 0), (-1, header_rows - 1), BVB_Y),
+        ("FONTNAME",     (0, 0), (-1, header_rows - 1), "Helvetica-Bold"),
+        ("FONTSIZE",     (0, 0), (-1, -1), 8),
+        ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING",  (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING",   (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING",(0, 0), (-1, -1), 3),
+        ("GRID",         (0, 0), (-1, -1), 0.25, colors.HexColor("#DDDDDD")),
+    ]
+    if zebra:
+        for i in range(header_rows, len(rows)):
+            bg = WHITE if i % 2 == 0 else LGRAY
+            cmds.append(("BACKGROUND", (0, i), (-1, i), bg))
+    if best_row is not None:
+        cmds.append(("BACKGROUND", (0, best_row), (-1, best_row),
+                     colors.HexColor("#DCFCE7")))
+    if worst_row is not None:
+        cmds.append(("BACKGROUND", (0, worst_row), (-1, worst_row),
+                     colors.HexColor("#FEE2E2")))
+    t.setStyle(TableStyle(cmds))
+    return t
+
+
+def score_card_table(cards: list) -> Table:
+    """
+    Render a row of metric cards.
+    cards = list of (label, value, badge_text, badge_color)
+    """
+    S = style()
+    CARD_W = W_BODY / len(cards)
+    cells = []
+    for label, value, badge, badge_color in cards:
+        badge_rl = colors.HexColor(badge_color)
+        cell_content = [
+            Paragraph(f'<font size="7" color="#888888">{label}</font>', S["caption"]),
+            Spacer(1, 3),
+            Paragraph(f'<b><font size="16" color="#0A0A0A">{value}</font></b>',
+                      S["caption"]),
+            Spacer(1, 3),
+            Paragraph(f'<font size="6.5" color="{badge_color}"><b>{badge}</b></font>',
+                      S["caption"]),
         ]
-        rows = [header_row]
-        for group_name, metrics in METRIC_GROUPS:
+        cells.append(cell_content)
+
+    t = Table([cells], colWidths=[CARD_W] * len(cards))
+    cmds = [
+        ("VALIGN",      (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN",       (0, 0), (-1, -1), "CENTER"),
+        ("TOPPADDING",  (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING",(0,0), (-1, -1), 8),
+        ("BACKGROUND",  (0, 0), (-1, -1), LGRAY),
+        ("GRID",        (0, 0), (-1, -1), 0.5, colors.HexColor("#DDDDDD")),
+    ]
+    t.setStyle(TableStyle(cmds))
+    return t
+
+
+def cover_page_elements(title: str, subtitle: str,
+                        session: str, n_players: int, S: dict) -> list:
+    elems = []
+    # Full-width black header band
+    band = Table([[""]], colWidths=[W_BODY], rowHeights=[3.5 * cm])
+    band.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), BVB_BK),
+    ]))
+    elems.append(band)
+    elems.append(Spacer(1, 0.5 * cm))
+
+    # BVB yellow accent line
+    elems.append(HRFlowable(width="100%", thickness=4, color=BVB_Y,
+                             spaceAfter=16, spaceBefore=0))
+
+    elems.append(Paragraph(title, S["cover_title"]))
+    elems.append(Spacer(1, 0.3 * cm))
+    elems.append(Paragraph(subtitle, S["cover_sub"]))
+    elems.append(Spacer(1, 0.4 * cm))
+    elems.append(HRFlowable(width="60%", thickness=1, color=DGRAY,
+                             spaceAfter=12, spaceBefore=0))
+    elems.append(Paragraph(
+        f"Session: <b>{session}</b>   ·   {n_players} Spielerinnen getestet   ·   "
+        f"{datetime.now().strftime('%d.%m.%Y')}",
+        S["cover_meta"]))
+    elems.append(Spacer(1, 0.3 * cm))
+    elems.append(Paragraph(
+        "BVB Frauen · Performance Diagnostics · Sports Science Department",
+        S["cover_meta"]))
+    return elems
+
+
+def auto_insights(df: pd.DataFrame, session: str, player: str = None) -> list:
+    """Generate bullet-point insights from the data."""
+    sdf = df[df["session"] == session]
+    if player:
+        sdf = sdf[sdf["name"] == player]
+    insights = []
+
+    METRICS_CHECKED = [
+        ("cmj",      "Sprungkraft (CMJ)",       True),
+        ("dj_rsi",   "Reaktivkraft (RSI)",       True),
+        ("t20",      "Sprint 20m",               False),
+        ("agility",  "Agility",                  False),
+        ("vo2max",   "Aerobe Kapazität (VO2max)", True),
+    ]
+
+    if player:
+        row = sdf.iloc[0] if not sdf.empty else None
+        if row is None:
+            return []
+        for m, label, _ in METRICS_CHECKED:
+            z = hist_z(m, row.get(m))
+            if z is None:
+                continue
+            badge, _ = z_to_badge(z)
+            if z >= 108:
+                insights.append(f"✦ {label}: überdurchschnittlich stark (Z={z:.0f}) — {badge}")
+            elif z <= 92:
+                insights.append(f"▸ {label}: Entwicklungspotenzial (Z={z:.0f}) — Trainingsempfehlung")
+    else:
+        # Team insights
+        for m, label, hib in METRICS_CHECKED:
+            col = pd.to_numeric(sdf[m], errors="coerce").dropna()
+            if len(col) == 0:
+                continue
+            team_z = np.mean([hist_z(m, v) for v in col if hist_z(m, v) is not None])
+            if team_z is None:
+                continue
+            if team_z >= 105:
+                insights.append(f"✦ {label}: Team liegt über historischem Schnitt (Ø Z={team_z:.0f})")
+            elif team_z <= 95:
+                insights.append(f"▸ {label}: Teamschnitt unter Referenzwert (Ø Z={team_z:.0f}) — Fokus empfohlen")
+
+    return insights[:5]
+
+
+def training_recommendations(player: str, df: pd.DataFrame, session: str) -> list:
+    """Generate training focus suggestions based on Z-scores."""
+    p_row = df[(df["name"] == player) & (df["session"] == session)]
+    if p_row.empty:
+        return []
+    row = p_row.iloc[0]
+
+    recs = []
+    metric_focus = {
+        "cmj":      "Pliometrisches Training: Box Jumps, Depth Drops, Squat Jumps",
+        "dj_rsi":   "Reaktivkraft: Drop Jumps, Ankle Stiffness Drills, Bounding",
+        "t5":       "Beschleunigung: Start-Explosivität, Hip Drive, Sled Pushes",
+        "t20":      "Maximale Sprintgeschwindigkeit: Fliegende Sprints, Wickets",
+        "agility":  "Agilität: COD-Drills, Reaktions-Shuttles, T-Test Varianten",
+        "dribbling":"Technische Schnelligkeit: Ball-Drills unter Zeitdruck",
+        "vo2max":   "Aerobe Basis: Intervalltraining 90–95% HFmax, Tempoläufe",
+    }
+    for m, rec in metric_focus.items():
+        z = hist_z(m, row.get(m))
+        if z is not None and z < 95:
+            recs.append(f"• {METRIC_LABELS.get(m, m)}: {rec}")
+
+    return recs[:3] if recs else ["• Leistungsprofil ausgeglichen — allgemeines Erhaltungstraining empfohlen"]
+
+
+# ── FOOTER CANVAS ──────────────────────────────────────────────────────────────
+
+def make_footer_canvas(session_label: str):
+    def footer(canvas, doc):
+        canvas.saveState()
+        canvas.setFillColor(BVB_BK)
+        canvas.rect(0, 0, W_PAGE, 1.0 * cm, fill=1, stroke=0)
+        canvas.setFillColor(BVB_Y)
+        canvas.rect(0, 1.0 * cm, W_PAGE, 0.08 * cm, fill=1, stroke=0)
+        canvas.setFont("Helvetica", 6.5)
+        canvas.setFillColor(colors.HexColor("#888888"))
+        canvas.drawString(MARGIN, 0.35 * cm,
+            f"BVB Frauen · Performance Diagnostics · Session: {session_label}")
+        canvas.drawRightString(
+            W_PAGE - MARGIN, 0.35 * cm,
+            f"Seite {doc.page}  ·  Generiert am {datetime.now().strftime('%d.%m.%Y')}")
+        canvas.restoreState()
+    return footer
+
+
+# ── TEAM PDF ───────────────────────────────────────────────────────────────────
+
+def generate_team_pdf(df: pd.DataFrame) -> bytes:
+    S = style()
+    buf = io.BytesIO()
+    ALL_SESSIONS = sorted(df["session"].unique().tolist())
+    last_sess = ALL_SESSIONS[-1]
+    last_df   = df[df["session"] == last_sess]
+    n_players = last_df["name"].nunique()
+    HIB_MAP   = HIB
+
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=MARGIN, rightMargin=MARGIN,
+        topMargin=MARGIN, bottomMargin=1.6 * cm,
+    )
+    story = []
+
+    # ── COVER ──────────────────────────────────────────────────────────────
+    story += cover_page_elements(
+        "Leistungsdiagnostik", "BVB Frauen · Team Performance Report",
+        last_sess, n_players, S,
+    )
+    story.append(Spacer(1, 0.6 * cm))
+
+    # Executive summary score cards
+    def best_player(metric):
+        col = pd.to_numeric(last_df[metric], errors="coerce")
+        idx = col.idxmax() if HIB_MAP.get(metric, True) else col.idxmin()
+        if pd.isna(idx):
+            return "—", None
+        row = last_df.loc[idx]
+        return row["name"].split()[-1], col[idx]
+
+    sprint_name, sprint_val = best_player("t20")
+    jump_name,   jump_val   = best_player("cmj")
+    vo2_name,    vo2_val    = best_player("vo2max")
+    rsi_name,    rsi_val    = best_player("dj_rsi")
+
+    # Overall team fitness score (mean of all hist_z)
+    all_z = []
+    for m in ["cmj", "dj_rsi", "t5", "t20", "agility", "dribbling", "vo2max"]:
+        col = pd.to_numeric(last_df[m], errors="coerce").dropna()
+        all_z += [hist_z(m, v) for v in col if hist_z(m, v) is not None]
+    team_fitness = round(np.mean(all_z), 1) if all_z else 100
+    fitness_badge, fitness_color = z_to_badge(team_fitness)
+
+    cards = [
+        ("BEST SPRINT",    fmt(sprint_val, 2) + "s", sprint_name, "#3B82F6"),
+        ("BEST JUMP",      fmt(jump_val, 1) + "cm",  jump_name,   "#22C55E"),
+        ("BEST VO2MAX",    fmt(vo2_val, 1),           vo2_name,    "#A855F7"),
+        ("TEAM FITNESS",   f"Z = {team_fitness:.0f}", fitness_badge, fitness_color),
+    ]
+    story.append(score_card_table(cards))
+    story.append(PageBreak())
+
+    # ── PAGE 2: TEAM RADAR + TEAM INSIGHTS ────────────────────────────────
+    rl_section(story, "Squad Benchmark Summary", S)
+
+    # Build team average axis scores
+    team_axis = {}
+    for ax, metrics in RADAR_AXES.items():
+        z_vals = []
+        for m in metrics:
+            col = pd.to_numeric(last_df[m], errors="coerce").dropna()
+            z_vals += [hist_z(m, v) for v in col if hist_z(m, v) is not None]
+        team_axis[ax] = round(np.mean(z_vals), 1) if z_vals else 100
+
+    # Elite benchmark = 108 across all axes (top 20%)
+    elite_axis = {ax: 108 for ax in RADAR_LABELS}
+
+    radar_bytes = chart_radar(team_axis, elite_axis,
+                              title="Team Ø vs Elite-Referenz (Z=108)")
+    story.append(img_flowable(radar_bytes, width_cm=12))
+    story.append(Paragraph("Radar basiert auf historischen Z-Scores (Referenz: MW seit Jul 2023). "
+                            "Außenring = Elite-Niveau (Z≥108).", S["caption"]))
+    story.append(Spacer(1, 0.3 * cm))
+
+    # Team insights
+    rl_sub(story, "Auto-Insights", S)
+    insights = auto_insights(df, last_sess)
+    for ins in insights:
+        story.append(Paragraph(ins, S["insight"]))
+    story.append(Spacer(1, 0.2 * cm))
+
+    # Session stats table
+    rl_sub(story, "Mannschaft · Statistische Übersicht", S)
+    for sess in ALL_SESSIONS:
+        s_df = df[df["session"] == sess]
+        story.append(Paragraph(f"<b>{sess}</b>", S["body"]))
+        story.append(Spacer(1, 0.1 * cm))
+
+        METRIC_GROUPS = [
+            ("Sprint", ["t5","t10","t20","t30"]),
+            ("Power",  ["cmj","dj_rsi"]),
+            ("Fitness",["agility","dribbling","vo2max"]),
+        ]
+        col_w = [3.2*cm, 2.5*cm, 2.3*cm, 2.0*cm, 2.3*cm, 2.3*cm]
+        hrow = [Paragraph(f"<b>{h}</b>", S["body"])
+                for h in ["Gruppe · Metrik", "Messgröße", "Mittelwert", "SD", "Min", "Max"]]
+        rows = [hrow]
+        for grp, metrics in METRIC_GROUPS:
             first = True
-            for metric_key, metric_label in metrics:
-                col = sess_df[metric_key].dropna() if metric_key in sess_df else pd.Series([], dtype=float)
-                col = pd.to_numeric(col, errors="coerce").dropna()
-                mw  = col.mean() if len(col) else None
-                sd  = col.std()  if len(col) else None
-                mn  = col.min()  if len(col) else None
-                mx  = col.max()  if len(col) else None
-                dec = 2 if metric_key in ("t5","t10","t20","t30","agility","dribbling","dj_rsi") else 1 if metric_key == "cmj" else 2
+            for m in metrics:
+                col = pd.to_numeric(s_df[m], errors="coerce").dropna()
+                dec = DEC_MAP.get(m, 2)
                 rows.append([
-                    Paragraph(f"<b>{group_name}</b>" if first else "", BODY),
-                    Paragraph(metric_label, BODY),
-                    Paragraph(fmt(mw, dec), BODY),
-                    Paragraph(fmt(sd, dec), BODY),
-                    Paragraph(fmt(mn, dec), BODY),
-                    Paragraph(fmt(mx, dec), BODY),
+                    Paragraph(f"<b>{grp}</b>" if first else "", S["body"]),
+                    Paragraph(METRIC_LABELS.get(m, m), S["body"]),
+                    Paragraph(fmt(col.mean(), dec) if len(col) else "—", S["body"]),
+                    Paragraph(fmt(col.std(),  dec) if len(col) else "—", S["body"]),
+                    Paragraph(fmt(col.min(),  dec) if len(col) else "—", S["body"]),
+                    Paragraph(fmt(col.max(),  dec) if len(col) else "—", S["body"]),
                 ])
                 first = False
 
-        t = Table(rows, colWidths=col_w)
-        t.setStyle(TableStyle([
-            ("BACKGROUND",  (0,0), (-1,0), DGRAY),
-            ("TEXTCOLOR",   (0,0), (-1,0), BVB_Y),
-            ("FONTNAME",    (0,0), (-1,0), "Helvetica-Bold"),
-            ("FONTSIZE",    (0,0), (-1,-1), 8),
-            ("ROWBACKGROUNDS",(0,1),(-1,-1),[WHITE, LGRAY]),
-            ("GRID",        (0,0), (-1,-1), 0.3, colors.HexColor("#CCCCCC")),
-            ("VALIGN",      (0,0), (-1,-1), "MIDDLE"),
-            ("LEFTPADDING",  (0,0),(-1,-1), 4),
-            ("RIGHTPADDING", (0,0),(-1,-1), 4),
-            ("TOPPADDING",   (0,0),(-1,-1), 3),
-            ("BOTTOMPADDING",(0,0),(-1,-1), 3),
-        ]))
-        story.append(t)
-        story.append(Spacer(1, 0.3*cm))
+        story.append(styled_table(rows, col_w))
+        story.append(Spacer(1, 0.3 * cm))
 
-    # ── PART 2: RANKED LISTS PER METRIC ─────────────────────────────────
+    # ── PAGE 3: RANKINGS ───────────────────────────────────────────────────
     story.append(PageBreak())
-    hdr("Ergebnisse nach Disziplin")
-    rule()
+    rl_section(story, "Performance Rankings", S)
 
-    for group_name, metrics in METRIC_GROUPS:
-        subhdr(group_name)
-        for metric_key, metric_label in metrics:
-            metric_hdr(metric_label)
-            hib = HIB.get(metric_key, True)
+    key_metrics = [
+        ("cmj",       "Explosive Power Leaderboard · CMJ"),
+        ("t20",       "Sprint Performance Rankings · 20m"),
+        ("vo2max",    "Aerobic Capacity Analysis · VO2max"),
+        ("agility",   "Agility Rankings"),
+        ("dribbling", "Technical Speed Rankings · Dribbling"),
+        ("dj_rsi",    "Reactive Strength Index · DJ RSI"),
+    ]
 
-            # Collect all players who have data in at least one session
-            all_vals = {}
-            for _, row in df[df[metric_key].notna()].iterrows():
+    for m, chart_title in key_metrics:
+        hib = HIB_MAP.get(m, True)
+        all_vals = {}
+        for _, row in df[df[m].notna()].iterrows():
+            v = pd.to_numeric(row[m], errors="coerce")
+            if pd.notna(v):
                 p = row["name"]
                 s = row["session"]
                 if p not in all_vals:
                     all_vals[p] = {}
-                v = pd.to_numeric(row[metric_key], errors="coerce")
-                if pd.notna(v):
-                    all_vals[p][s] = v
+                all_vals[p][s] = v
 
-            if not all_vals:
-                story.append(Paragraph("Keine Daten.", SMALL))
-                continue
+        if not all_vals:
+            continue
 
-            # Sort by latest session value
-            last_s = ALL_SESSIONS[-1]
-            def sort_key(p):
-                v = all_vals[p].get(last_s)
-                if v is None:
-                    # try second to last
-                    for s in reversed(ALL_SESSIONS[:-1]):
-                        v = all_vals[p].get(s)
-                        if v is not None:
-                            break
-                return (v if v is not None else (float("inf") if not hib else float("-inf")))
+        sorted_players = sorted(
+            all_vals.keys(),
+            key=lambda p: all_vals[p].get(last_sess,
+                float("-inf") if hib else float("inf")),
+            reverse=hib,
+        )
 
-            sorted_players = sorted(all_vals.keys(),
-                                    key=sort_key,
-                                    reverse=hib)
+        vals_last = [all_vals[p].get(last_sess) for p in sorted_players
+                     if all_vals[p].get(last_sess) is not None]
+        players_with_val = [p for p in sorted_players
+                            if all_vals[p].get(last_sess) is not None]
 
-            # Build table: Name | sess1 | sess2 | ...
-            col_w_ranked = [4.5*cm] + [min(2.8*cm, (W-4.5*cm)/len(ALL_SESSIONS))]*len(ALL_SESSIONS)
-            hrow = [Paragraph("<b>Spielerin</b>", BODY)] +                    [Paragraph(f"<b>{s}</b>", BODY) for s in ALL_SESSIONS]
-            rows = [hrow]
-            for p in sorted_players:
-                row_data = [Paragraph(p, BODY)]
-                for s in ALL_SESSIONS:
-                    v = all_vals[p].get(s)
-                    dec = 2 if metric_key in ("t5","t10","t20","t30","agility","dribbling","dj_rsi") else 1 if metric_key == "cmj" else 2
-                    row_data.append(Paragraph(fmt(v, dec) if v is not None else "X", BODY))
-                rows.append(row_data)
+        if not vals_last:
+            continue
 
-            t = Table(rows, colWidths=col_w_ranked, repeatRows=1)
-            # Highlight best/worst
-            style_cmds = [
-                ("BACKGROUND",  (0,0), (-1,0), DGRAY),
-                ("TEXTCOLOR",   (0,0), (-1,0), BVB_Y),
-                ("FONTNAME",    (0,0), (-1,0), "Helvetica-Bold"),
-                ("FONTSIZE",    (0,0), (-1,-1), 8),
-                ("ROWBACKGROUNDS",(0,1),(-1,-1),[WHITE, LGRAY]),
-                ("GRID",        (0,0), (-1,-1), 0.3, colors.HexColor("#CCCCCC")),
-                ("VALIGN",      (0,0), (-1,-1), "MIDDLE"),
-                ("LEFTPADDING",  (0,0),(-1,-1), 4),
-                ("RIGHTPADDING", (0,0),(-1,-1), 4),
-                ("TOPPADDING",   (0,0),(-1,-1), 2),
-                ("BOTTOMPADDING",(0,0),(-1,-1), 2),
-            ]
-            # Color best row green, worst row red
-            if len(rows) > 2:
-                style_cmds.append(("BACKGROUND", (0,1), (-1,1), colors.HexColor("#D5F5E3")))
-                style_cmds.append(("BACKGROUND", (0,len(rows)-1), (-1,len(rows)-1), colors.HexColor("#FADBD8")))
-            t.setStyle(TableStyle(style_cmds))
-            story.append(t)
-            story.append(Spacer(1, 0.3*cm))
+        team_avg = np.mean(vals_last)
+        bar_bytes = chart_hbar(players_with_val, vals_last,
+                                METRIC_LABELS.get(m, m),
+                                team_avg=team_avg)
 
-    # ── PART 3: INDIVIDUAL PLAYER CARDS ─────────────────────────────────
+        # Table alongside
+        col_w_r = [4.5*cm] + [min(2.6*cm, (W_BODY-4.5*cm)/len(ALL_SESSIONS))] * len(ALL_SESSIONS)
+        hrow = [Paragraph("<b>Spielerin</b>", S["body"])] + \
+               [Paragraph(f"<b>{s}</b>", S["body"]) for s in ALL_SESSIONS]
+        t_rows = [hrow]
+        for p in sorted_players:
+            row_data = [Paragraph(p, S["body"])]
+            for s in ALL_SESSIONS:
+                v = all_vals[p].get(s)
+                dec = DEC_MAP.get(m, 2)
+                row_data.append(Paragraph(fmt(v, dec) if v is not None else "X", S["body"]))
+            t_rows.append(row_data)
+
+        best_r  = 1 if len(t_rows) > 1 else None
+        worst_r = len(t_rows) - 1 if len(t_rows) > 2 else None
+
+        story.append(KeepTogether([
+            Paragraph(chart_title, S["sub"]),
+            img_flowable(bar_bytes, width_cm=16),
+            Spacer(1, 0.15 * cm),
+            styled_table(t_rows, col_w_r, best_row=best_r, worst_row=worst_r),
+            Spacer(1, 0.5 * cm),
+        ]))
+
+    # ── PAGE 4: INDIVIDUAL CARDS ────────────────────────────────────────────
     story.append(PageBreak())
-    hdr("Individuelle Leistungsprofile")
-    rule()
+    rl_section(story, "Individuelle Leistungsprofile", S)
 
+    # Team axis scores for comparison in player cards
     all_players_sorted = sorted(df["name"].unique())
     for player in all_players_sorted:
         p_df = df[df["name"] == player].sort_values("session")
         if p_df.empty:
             continue
         p_sessions = p_df["session"].tolist()
+        last_p_sess = p_sessions[-1]
+        p_last_row  = p_df[p_df["session"] == last_p_sess].iloc[0]
 
-        subhdr(player)
-        story.append(Paragraph(f"Sessions: {' · '.join(p_sessions)}", SMALL))
-        story.append(Spacer(1, 0.1*cm))
+        p_axis = player_axis_scores(p_last_row)
+        t_axis = team_axis
 
-        dec_map = {
-            "cmj": 1, "dj_rsi": 3,
-            "t5": 2, "t10": 2, "t20": 2, "t30": 2,
-            "agility": 2, "dribbling": 2, "vo2max": 2,
-        }
+        # Score cards
+        overall_z = np.mean([v for v in p_axis.values() if v is not None] or [100])
+        badge, bc  = z_to_badge(overall_z)
+        cmj_v  = p_last_row.get("cmj")
+        t20_v  = p_last_row.get("t20")
+        vo2_v  = p_last_row.get("vo2max")
 
-        col_w_p = [4*cm] + [min(2.8*cm, (W-4*cm)/len(p_sessions))]*len(p_sessions)
-        hrow = [Paragraph("<b>Test</b>", BODY)] +                [Paragraph(f"<b>{s}</b>", BODY) for s in p_sessions]
-        rows = [hrow]
+        p_cards = [
+            ("OVERALL", f"Z = {overall_z:.0f}", badge, bc),
+            ("CMJ", fmt(cmj_v, 1) + " cm" if cmj_v else "—",
+             *z_to_badge(hist_z("cmj", cmj_v))),
+            ("SPRINT 20m", fmt(t20_v, 2) + " s" if t20_v else "—",
+             *z_to_badge(hist_z("t20", t20_v))),
+            ("VO2MAX", fmt(vo2_v, 1) if vo2_v else "—",
+             *z_to_badge(hist_z("vo2max", vo2_v))),
+        ]
 
-        for group_name, metrics in METRIC_GROUPS:
+        radar_bytes = chart_radar(p_axis, t_axis,
+                                  title=f"{player} vs Team Ø")
+
+        dec_map = DEC_MAP
+        col_w_p = [3.8*cm] + [min(2.8*cm, (W_BODY-3.8*cm)/len(p_sessions))] * len(p_sessions)
+        hrow = [Paragraph("<b>Test</b>", S["body"])] + \
+               [Paragraph(f"<b>{s}</b>", S["body"]) for s in p_sessions]
+        p_rows = [hrow]
+        for grp, metrics in [
+            ("Sprint", ["t5","t10","t20","t30"]),
+            ("Power",  ["cmj","dj_rsi"]),
+            ("Fitness",["agility","dribbling","vo2max"]),
+        ]:
             first = True
-            for metric_key, metric_label in metrics:
-                row_data = [Paragraph(
-                    f"<b>{group_name}</b> {metric_label}" if first else metric_label,
-                    BODY)]
+            for mk in metrics:
+                r_data = [Paragraph(
+                    f"<b>{grp}</b> · {METRIC_LABELS.get(mk,mk)}" if first
+                    else METRIC_LABELS.get(mk, mk), S["body"])]
                 first = False
                 for s in p_sessions:
                     rec = p_df[p_df["session"] == s]
-                    if rec.empty:
-                        row_data.append(Paragraph("X", BODY))
-                    else:
-                        v = pd.to_numeric(rec.iloc[0].get(metric_key), errors="coerce")
-                        dec = dec_map.get(metric_key, 2)
-                        row_data.append(Paragraph(fmt(v, dec) if pd.notna(v) else "X", BODY))
-                rows.append(row_data)
+                    v = pd.to_numeric(rec.iloc[0].get(mk), errors="coerce") \
+                        if not rec.empty else None
+                    r_data.append(Paragraph(
+                        fmt(v, dec_map.get(mk, 2)) if v is not None and pd.notna(v) else "X",
+                        S["body"]))
+                p_rows.append(r_data)
 
-        t = Table(rows, colWidths=col_w_p, repeatRows=1)
-        t.setStyle(TableStyle([
-            ("BACKGROUND",  (0,0), (-1,0), DGRAY),
-            ("TEXTCOLOR",   (0,0), (-1,0), BVB_Y),
-            ("FONTNAME",    (0,0), (-1,0), "Helvetica-Bold"),
-            ("FONTSIZE",    (0,0), (-1,-1), 8),
-            ("ROWBACKGROUNDS",(0,1),(-1,-1),[WHITE, LGRAY]),
-            ("GRID",        (0,0), (-1,-1), 0.3, colors.HexColor("#CCCCCC")),
-            ("VALIGN",      (0,0), (-1,-1), "MIDDLE"),
-            ("LEFTPADDING",  (0,0),(-1,-1), 4),
-            ("RIGHTPADDING", (0,0),(-1,-1), 4),
-            ("TOPPADDING",   (0,0),(-1,-1), 2),
-            ("BOTTOMPADDING",(0,0),(-1,-1), 2),
+        insights_p = auto_insights(df, last_p_sess, player)
+        recs_p     = training_recommendations(player, df, last_p_sess)
+
+        block = [
+            Paragraph(f"<b>{player}</b>", S["section"]),
+            Paragraph(f"Sessions: {' · '.join(p_sessions)}  ·  Letzte: {last_p_sess}",
+                      S["small"]),
+            Spacer(1, 0.1 * cm),
+            score_card_table(p_cards),
+            Spacer(1, 0.15 * cm),
+        ]
+
+        # Radar + table side by side
+        radar_img = img_flowable(radar_bytes, width_cm=8.5)
+        tbl = styled_table(p_rows, col_w_p)
+        side_table = Table(
+            [[radar_img, tbl]],
+            colWidths=[9 * cm, W_BODY - 9 * cm],
+        )
+        side_table.setStyle(TableStyle([
+            ("VALIGN", (0,0), (-1,-1), "TOP"),
+            ("LEFTPADDING", (0,0), (-1,-1), 0),
+            ("RIGHTPADDING", (0,0), (-1,-1), 0),
         ]))
-        story.append(t)
-        story.append(Spacer(1, 0.5*cm))
+        block.append(side_table)
+        block.append(Spacer(1, 0.15 * cm))
 
-    doc.build(story)
+        if insights_p:
+            block.append(Paragraph("<b>Performance-Analyse</b>", S["sub"]))
+            for ins in insights_p:
+                block.append(Paragraph(ins, S["insight"]))
+
+        if recs_p:
+            block.append(Spacer(1, 0.1 * cm))
+            block.append(Paragraph("<b>Trainingsempfehlungen</b>", S["sub"]))
+            for rec in recs_p:
+                block.append(Paragraph(rec, S["body"]))
+
+        block.append(Spacer(1, 0.4 * cm))
+        block.append(HRFlowable(width="100%", thickness=0.5,
+                                 color=colors.HexColor("#DDDDDD")))
+        story.append(KeepTogether(block))
+
+    doc.build(story,
+              onFirstPage=make_footer_canvas(last_sess),
+              onLaterPages=make_footer_canvas(last_sess))
     buf.seek(0)
     return buf.read()
 
 
+# ── PLAYER PDF ─────────────────────────────────────────────────────────────────
+
 def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
-    """Single-player report: full history table + context."""
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib import colors
-    from reportlab.lib.units import cm
-    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
-                                    Table, TableStyle, HRFlowable)
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    import io, numpy as np
-
-    BVB_Y  = colors.HexColor("#FDE000")
-    BVB_BK = colors.HexColor("#0A0A0A")
-    DGRAY  = colors.HexColor("#2D2D2D")
-    LGRAY  = colors.HexColor("#F5F5F5")
-    MGRAY  = colors.HexColor("#888888")
-    WHITE  = colors.white
-
+    S = style()
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4,
-                            leftMargin=1.5*cm, rightMargin=1.5*cm,
-                            topMargin=1.5*cm, bottomMargin=1.5*cm)
-    styles = getSampleStyleSheet()
-    H1   = ParagraphStyle("H1p",   fontName="Helvetica-Bold", fontSize=16,
-                           textColor=BVB_Y, backColor=BVB_BK, leading=22,
-                           spaceAfter=6, leftIndent=6)
-    BODY = ParagraphStyle("BODYp", fontName="Helvetica", fontSize=9, leading=12)
-    SMALL= ParagraphStyle("SMALLp",fontName="Helvetica", fontSize=7,
-                           leading=10, textColor=MGRAY)
-    story = []
-    W = 18*cm
+    ALL_SESSIONS = sorted(df["session"].unique().tolist())
+    last_sess = ALL_SESSIONS[-1]
 
     p_df = df[df["name"] == player].sort_values("session")
     if p_df.empty:
-        story.append(Paragraph(f"Keine Daten für {player}.", BODY))
-        doc.build(story)
-        buf.seek(0)
-        return buf.read()
+        buf.write(b"No data")
+        return buf.getvalue()
 
-    p_sessions = p_df["session"].tolist()
+    p_sessions  = p_df["session"].tolist()
+    last_p_sess = p_sessions[-1]
+    p_last_row  = p_df[p_df["session"] == last_p_sess].iloc[0]
+    last_df     = df[df["session"] == last_sess]
 
-    story.append(Paragraph(f"BVB Frauen · Leistungsprofil: {player}", H1))
-    story.append(HRFlowable(width="100%", thickness=1.5, color=BVB_Y, spaceAfter=6))
-    story.append(Paragraph(f"Sessions: {' · '.join(p_sessions)}", SMALL))
-    story.append(Spacer(1, 0.3*cm))
+    # Build comparison scores
+    p_axis = player_axis_scores(p_last_row)
+    team_axis = {}
+    for ax, metrics in RADAR_AXES.items():
+        z_vals = []
+        for m in metrics:
+            col = pd.to_numeric(last_df[m], errors="coerce").dropna()
+            z_vals += [hist_z(m, v) for v in col if hist_z(m, v) is not None]
+        team_axis[ax] = round(np.mean(z_vals), 1) if z_vals else 100
 
-    dec_map = {"cmj":1,"dj_rsi":3,"t5":2,"t10":2,"t20":2,"t30":2,"agility":2,"dribbling":2,"vo2max":2}
+    overall_z = np.mean([v for v in p_axis.values() if v is not None] or [100])
+    badge, bc  = z_to_badge(overall_z)
 
-    def fmt(v, dec=2):
-        if v is None or (isinstance(v, float) and np.isnan(v)): return "—"
-        return f"{v:.{dec}f}".replace(".", ",")
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=MARGIN, rightMargin=MARGIN,
+        topMargin=MARGIN, bottomMargin=1.6 * cm,
+    )
+    story = []
 
-    col_w = [4.5*cm] + [min(3*cm, (W-4.5*cm)/len(p_sessions))]*len(p_sessions)
-    hrow  = [Paragraph("<b>Test</b>", BODY)] +             [Paragraph(f"<b>{s}</b>", BODY) for s in p_sessions]
-    rows  = [hrow]
+    # ── COVER / HEADER ──────────────────────────────────────────────────────
+    story += cover_page_elements(
+        player, "Individual Athletic Profile · BVB Frauen",
+        last_p_sess, len(p_sessions), S,
+    )
+    story.append(Spacer(1, 0.4 * cm))
 
-    for group_name, metrics in _pdf_metric_groups():
+    # Score cards row 1
+    cmj_v  = p_last_row.get("cmj")
+    t5_v   = p_last_row.get("t5")
+    t20_v  = p_last_row.get("t20")
+    vo2_v  = p_last_row.get("vo2max")
+    rsi_v  = p_last_row.get("dj_rsi")
+    agl_v  = p_last_row.get("agility")
+
+    cards = [
+        ("OVERALL SCORE", f"Z = {overall_z:.0f}", badge, bc),
+        ("CMJ HEIGHT",   fmt(cmj_v,1)+" cm" if cmj_v else "—",
+         *z_to_badge(hist_z("cmj", cmj_v))),
+        ("SPRINT 20m",   fmt(t20_v,2)+" s" if t20_v else "—",
+         *z_to_badge(hist_z("t20", t20_v))),
+        ("VO2MAX",       fmt(vo2_v,1) if vo2_v else "—",
+         *z_to_badge(hist_z("vo2max", vo2_v))),
+        ("DJ RSI",       fmt(rsi_v,2) if rsi_v else "—",
+         *z_to_badge(hist_z("dj_rsi", rsi_v))),
+    ]
+    story.append(score_card_table(cards))
+    story.append(Spacer(1, 0.3 * cm))
+
+    # ── RADAR + PERCENTILE BAR ───────────────────────────────────────────────
+    rl_section(story, "Individual Athletic Profile", S)
+
+    radar_bytes = chart_radar(p_axis, team_axis,
+                              title=f"{player.split()[-1]} vs Team Ø (Z-Score)")
+    pct_bytes   = chart_percentile_bar(player, df, last_p_sess)
+
+    if pct_bytes:
+        side = Table(
+            [[img_flowable(radar_bytes, 8.5),
+              img_flowable(pct_bytes, 8.5)]],
+            colWidths=[9*cm, W_BODY-9*cm],
+        )
+        side.setStyle(TableStyle([
+            ("VALIGN", (0,0),(-1,-1), "TOP"),
+            ("LEFTPADDING",(0,0),(-1,-1), 0),
+            ("RIGHTPADDING",(0,0),(-1,-1), 0),
+        ]))
+        story.append(side)
+    else:
+        story.append(img_flowable(radar_bytes, 10))
+
+    story.append(Paragraph(
+        "Links: Sechsachsen-Radar (Spielerin gelb, Team Ø grau). "
+        "Rechts: Z-Score je Metrik (grün=stark, rot=Entwicklungsfeld).",
+        S["caption"]))
+    story.append(Spacer(1, 0.2 * cm))
+
+    # ── TREND (if multiple sessions) ─────────────────────────────────────────
+    if len(p_sessions) >= 2:
+        rl_section(story, "Performance Trend", S)
+        trend_bytes = chart_trend(player, df)
+        if trend_bytes:
+            story.append(img_flowable(trend_bytes, 16))
+            story.append(Paragraph(
+                "Z-Score-Entwicklung über alle Sessions (Referenz: historischer Mannschaftsdurchschnitt).",
+                S["caption"]))
+            story.append(Spacer(1, 0.2 * cm))
+
+    # ── DATA TABLE ─────────────────────────────────────────────────────────
+    rl_section(story, "Messdaten · Vollständige Historie", S)
+
+    col_w_p = [3.8*cm] + [min(2.8*cm, (W_BODY-3.8*cm)/len(p_sessions))]*len(p_sessions)
+    hrow = [Paragraph("<b>Test</b>", S["body"])] + \
+           [Paragraph(f"<b>{s}</b>", S["body"]) for s in p_sessions]
+    p_rows = [hrow]
+
+    for grp, metrics in [
+        ("Sprint",  ["t5","t10","t20","t30"]),
+        ("Power",   ["cmj","dj_rsi"]),
+        ("Fitness", ["agility","dribbling","vo2max"]),
+    ]:
         first = True
-        for metric_key, metric_label in metrics:
-            row_data = [Paragraph(
-                f"<b>{group_name}</b> · {metric_label}" if first else metric_label,
-                BODY)]
+        for mk in metrics:
+            r_data = [Paragraph(
+                f"<b>{grp}</b> · {METRIC_LABELS.get(mk,mk)}" if first
+                else METRIC_LABELS.get(mk, mk), S["body"])]
             first = False
             for s in p_sessions:
                 rec = p_df[p_df["session"] == s]
-                if rec.empty:
-                    row_data.append(Paragraph("X", BODY))
-                else:
-                    v = pd.to_numeric(rec.iloc[0].get(metric_key), errors="coerce")
-                    dec = dec_map.get(metric_key, 2)
-                    row_data.append(Paragraph(fmt(v, dec) if pd.notna(v) else "X", BODY))
-            rows.append(row_data)
+                v = pd.to_numeric(rec.iloc[0].get(mk), errors="coerce") \
+                    if not rec.empty else None
+                r_data.append(Paragraph(
+                    fmt(v, DEC_MAP.get(mk, 2)) if v is not None and pd.notna(v) else "X",
+                    S["body"]))
+            p_rows.append(r_data)
 
-    t = Table(rows, colWidths=col_w)
-    t.setStyle(TableStyle([
-        ("BACKGROUND",   (0,0),(-1,0), DGRAY),
-        ("TEXTCOLOR",    (0,0),(-1,0), BVB_Y),
-        ("FONTNAME",     (0,0),(-1,0), "Helvetica-Bold"),
-        ("FONTSIZE",     (0,0),(-1,-1), 9),
-        ("ROWBACKGROUNDS",(0,1),(-1,-1),[WHITE, LGRAY]),
-        ("GRID",         (0,0),(-1,-1), 0.3, colors.HexColor("#CCCCCC")),
-        ("VALIGN",       (0,0),(-1,-1), "MIDDLE"),
-        ("LEFTPADDING",  (0,0),(-1,-1), 5),
-        ("RIGHTPADDING", (0,0),(-1,-1), 5),
-        ("TOPPADDING",   (0,0),(-1,-1), 4),
-        ("BOTTOMPADDING",(0,0),(-1,-1), 4),
-    ]))
-    story.append(t)
+    story.append(styled_table(p_rows, col_w_p))
+    story.append(Spacer(1, 0.3 * cm))
 
-    doc.build(story)
+    # ── AUTO INSIGHTS ─────────────────────────────────────────────────────────
+    rl_section(story, "Performance-Analyse", S)
+    insights = auto_insights(df, last_p_sess, player)
+    if insights:
+        for ins in insights:
+            story.append(Paragraph(ins, S["insight"]))
+    else:
+        story.append(Paragraph("Ausgeglichenes Leistungsprofil in dieser Session.", S["body"]))
+
+    story.append(Spacer(1, 0.2 * cm))
+
+    # ── TRAINING RECOMMENDATIONS ───────────────────────────────────────────
+    rl_section(story, "Trainingsempfehlungen", S)
+    recs = training_recommendations(player, df, last_p_sess)
+    for rec in recs:
+        story.append(Paragraph(rec, S["body"]))
+
+    doc.build(story,
+              onFirstPage=make_footer_canvas(last_p_sess),
+              onLaterPages=make_footer_canvas(last_p_sess))
     buf.seek(0)
     return buf.read()
 
