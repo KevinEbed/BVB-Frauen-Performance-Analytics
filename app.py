@@ -764,41 +764,28 @@ MPL_TXT  = "#AAAAAA"
 MPL_Y    = "#FDE000"
 MPL_DARK = "#2D2D2D"
 
-HIST_MW = {
-    "cmj":31.780,"dj_rsi":1.630,"t5":1.082,"t10":1.884,
-    "t20":3.329,"t30":4.660,"agility":16.332,
-    "dribbling":10.331,"vo2max":49.538,
-}
-HIST_SD = {
-    "cmj":4.160,"dj_rsi":0.294,"t5":0.046,"t10":0.073,
-    "t20":0.132,"t30":0.192,"agility":0.663,
-    "dribbling":0.639,"vo2max":4.378,
-}
-HIB = {
-    "cmj":True,"dj_rsi":True,"t5":False,"t10":False,
-    "t20":False,"t30":False,"agility":False,
-    "dribbling":False,"vo2max":True,
-}
-METRIC_LABELS = {
+# PDF-only metric labels and decimal precision (do NOT clash with global RADAR_LABELS)
+PDF_METRIC_LABELS = {
     "cmj":"CMJ [cm]","dj_rsi":"DJ RSI","t5":"t5 [s]","t10":"t10 [s]",
     "t20":"t20 [s]","t30":"t30 [s]","agility":"Agility [s]",
     "dribbling":"Dribbling [s]","vo2max":"VO2max",
 }
-DEC_MAP = {
+PDF_DEC_MAP = {
     "cmj":1,"dj_rsi":2,"t5":2,"t10":2,
     "t20":2,"t30":2,"agility":2,"dribbling":2,"vo2max":2,
 }
 
-# Radar axis groupings (6-axis radar)
-RADAR_AXES = {
-    "Sprint":     ["t5", "t10"],
-    "Acceleration": ["t20", "t30"],
-    "Power":      ["cmj"],
-    "Reactivity": ["dj_rsi"],
-    "Endurance":  ["vo2max"],
+# 6-axis grouped radar for PDF — matches BVB sports-science print format
+# (website uses the 8-axis individual-metric radar; this is the PDF-only grouping)
+PDF_RADAR_AXES = {
+    "Sprint":              ["t5", "t10"],
+    "Acceleration":        ["t20", "t30"],
+    "Power":               ["cmj"],
+    "Reactivity":          ["dj_rsi"],
+    "Endurance":           ["vo2max"],
     "Agility & Technique": ["agility", "dribbling"],
 }
-RADAR_LABELS = list(RADAR_AXES.keys())
+PDF_RADAR_LABELS = list(PDF_RADAR_AXES.keys())
 
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
@@ -807,16 +794,6 @@ def fmt(v, dec=2):
     if v is None or (isinstance(v, float) and (math.isnan(v) or math.isinf(v))):
         return "—"
     return f"{v:.{dec}f}".replace(".", ",")
-
-
-def hist_z(metric, value):
-    if value is None or pd.isna(value):
-        return None
-    sign = 1 if HIB.get(metric, True) else -1
-    mw, sd = HIST_MW.get(metric), HIST_SD.get(metric)
-    if not mw or not sd or sd == 0:
-        return None
-    return round(100 + 10 * sign * (float(value) - mw) / sd, 1)
 
 
 def z_to_badge(z):
@@ -841,8 +818,8 @@ def axis_z(metrics_list, player_row):
 
 
 def player_axis_scores(row):
-    """Returns dict of {axis_label: z_score} for the 6-axis radar."""
-    return {ax: axis_z(metrics, row) for ax, metrics in RADAR_AXES.items()}
+    """Returns dict of {axis_label: z_score} for the 6-axis PDF radar."""
+    return {ax: axis_z(metrics, row) for ax, metrics in PDF_RADAR_AXES.items()}
 
 
 def style():
@@ -875,8 +852,8 @@ def style():
 
 def chart_radar(player_scores: dict, team_scores: dict,
                 title="", figsize=(4.2, 4.2)) -> bytes:
-    """6-axis radar: player (yellow) vs team average (grey)."""
-    labels = RADAR_LABELS
+    """6-axis grouped radar for PDF: player (yellow) vs team average (grey)."""
+    labels = PDF_RADAR_LABELS
     N = len(labels)
     angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
     angles += angles[:1]
@@ -1007,7 +984,7 @@ def chart_trend(player_name: str, df: pd.DataFrame,
             continue
         ax.plot(sessions, [v or np.nan for v in zvals],
                 "o-", lw=2, color=palette[i % len(palette)],
-                label=METRIC_LABELS.get(m, m), markersize=5)
+                label=PDF_METRIC_LABELS.get(m, m), markersize=5)
         plotted += 1
 
     ax.axhline(100, color="#444444", lw=1, ls="--", alpha=0.7)
@@ -1046,7 +1023,7 @@ def chart_percentile_bar(player_name: str, df: pd.DataFrame,
         z = hist_z(m, row.get(m))
         if z is None:
             continue
-        labels.append(METRIC_LABELS.get(m, m))
+        labels.append(PDF_METRIC_LABELS.get(m, m))
         zscores.append(z)
         if z >= 112:
             bar_colors.append("#22C55E")
@@ -1307,7 +1284,7 @@ def training_recommendations(player: str, df: pd.DataFrame, session: str) -> lis
     for m, rec in metric_focus.items():
         z = hist_z(m, row.get(m))
         if z is not None and z < 95:
-            recs.append(f"• {METRIC_LABELS.get(m, m)}: {rec}")
+            recs.append(f"• {PDF_METRIC_LABELS.get(m, m)}: {rec}")
 
     return recs[:3] if recs else ["• Leistungsprofil ausgeglichen — allgemeines Erhaltungstraining empfohlen"]
 
@@ -1346,7 +1323,6 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
     last_sess = ALL_SESSIONS[-1]
     last_df   = df[df["session"] == last_sess]
     n_players = last_df["name"].nunique()
-    HIB_MAP   = HIB
 
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
@@ -1365,7 +1341,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
     # Executive summary score cards
     def best_player(metric):
         col = pd.to_numeric(last_df[metric], errors="coerce")
-        idx = col.idxmax() if HIB_MAP.get(metric, True) else col.idxmin()
+        idx = col.idxmax() if RAW_METRICS.get(metric, {}).get("hib", True) else col.idxmin()
         if pd.isna(idx):
             return "—", None
         row = last_df.loc[idx]
@@ -1398,7 +1374,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
 
     # Build team average axis scores
     team_axis = {}
-    for ax, metrics in RADAR_AXES.items():
+    for ax, metrics in PDF_RADAR_AXES.items():
         z_vals = []
         for m in metrics:
             col = pd.to_numeric(last_df[m], errors="coerce").dropna()
@@ -1406,7 +1382,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
         team_axis[ax] = round(np.mean(z_vals), 1) if z_vals else 100
 
     # Elite benchmark = 108 across all axes (top 20%)
-    elite_axis = {ax: 108 for ax in RADAR_LABELS}
+    elite_axis = {ax: 108 for ax in PDF_RADAR_LABELS}
 
     radar_bytes = chart_radar(team_axis, elite_axis,
                               title="Team Ø vs Elite-Referenz (Z=108)")
@@ -1442,10 +1418,10 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
             first = True
             for m in metrics:
                 col = pd.to_numeric(s_df[m], errors="coerce").dropna()
-                dec = DEC_MAP.get(m, 2)
+                dec = PDF_DEC_MAP.get(m, 2)
                 rows.append([
                     Paragraph(f"<b>{grp}</b>" if first else "", S["body"]),
-                    Paragraph(METRIC_LABELS.get(m, m), S["body"]),
+                    Paragraph(PDF_METRIC_LABELS.get(m, m), S["body"]),
                     Paragraph(fmt(col.mean(), dec) if len(col) else "—", S["body"]),
                     Paragraph(fmt(col.std(),  dec) if len(col) else "—", S["body"]),
                     Paragraph(fmt(col.min(),  dec) if len(col) else "—", S["body"]),
@@ -1470,7 +1446,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
     ]
 
     for m, chart_title in key_metrics:
-        hib = HIB_MAP.get(m, True)
+        hib = RAW_METRICS.get(m, {}).get("hib", True)
         all_vals = {}
         for _, row in df[df[m].notna()].iterrows():
             v = pd.to_numeric(row[m], errors="coerce")
@@ -1501,9 +1477,9 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
 
         team_avg = np.mean(vals_last)
         bar_bytes = chart_hbar(players_with_val, vals_last,
-                                METRIC_LABELS.get(m, m),
+                                PDF_METRIC_LABELS.get(m, m),
                                 team_avg=team_avg,
-                                dec=DEC_MAP.get(m, 2))
+                                dec=PDF_DEC_MAP.get(m, 2))
 
         # Table alongside
         col_w_r = [4.5*cm] + [min(2.6*cm, (W_BODY-4.5*cm)/len(ALL_SESSIONS))] * len(ALL_SESSIONS)
@@ -1514,7 +1490,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
             row_data = [Paragraph(p, S["body"])]
             for s in ALL_SESSIONS:
                 v = all_vals[p].get(s)
-                dec = DEC_MAP.get(m, 2)
+                dec = PDF_DEC_MAP.get(m, 2)
                 row_data.append(Paragraph(fmt(v, dec) if v is not None else "X", S["body"]))
             t_rows.append(row_data)
 
@@ -1569,7 +1545,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
         radar_bytes = chart_radar(p_axis, t_axis,
                                   title=f"{player} vs Team Ø")
 
-        dec_map = DEC_MAP
+        dec_map = PDF_DEC_MAP
         col_w_p = [3.8*cm] + [min(2.8*cm, (W_BODY-3.8*cm)/len(p_sessions))] * len(p_sessions)
         hrow = [Paragraph("<b>Test</b>", S["body"])] + \
                [Paragraph(f"<b>{s}</b>", S["body"]) for s in p_sessions]
@@ -1582,8 +1558,8 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
             first = True
             for mk in metrics:
                 r_data = [Paragraph(
-                    f"<b>{grp}</b> · {METRIC_LABELS.get(mk,mk)}" if first
-                    else METRIC_LABELS.get(mk, mk), S["body"])]
+                    f"<b>{grp}</b> · {PDF_METRIC_LABELS.get(mk,mk)}" if first
+                    else PDF_METRIC_LABELS.get(mk, mk), S["body"])]
                 first = False
                 for s in p_sessions:
                     rec = p_df[p_df["session"] == s]
@@ -1666,7 +1642,7 @@ def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
     # Build comparison scores
     p_axis = player_axis_scores(p_last_row)
     team_axis = {}
-    for ax, metrics in RADAR_AXES.items():
+    for ax, metrics in PDF_RADAR_AXES.items():
         z_vals = []
         for m in metrics:
             col = pd.to_numeric(last_df[m], errors="coerce").dropna()
@@ -1767,15 +1743,15 @@ def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
         first = True
         for mk in metrics:
             r_data = [Paragraph(
-                f"<b>{grp}</b> · {METRIC_LABELS.get(mk,mk)}" if first
-                else METRIC_LABELS.get(mk, mk), S["body"])]
+                f"<b>{grp}</b> · {PDF_METRIC_LABELS.get(mk,mk)}" if first
+                else PDF_METRIC_LABELS.get(mk, mk), S["body"])]
             first = False
             for s in p_sessions:
                 rec = p_df[p_df["session"] == s]
                 v = pd.to_numeric(rec.iloc[0].get(mk), errors="coerce") \
                     if not rec.empty else None
                 r_data.append(Paragraph(
-                    fmt(v, DEC_MAP.get(mk, 2)) if v is not None and pd.notna(v) else "X",
+                    fmt(v, PDF_DEC_MAP.get(mk, 2)) if v is not None and pd.notna(v) else "X",
                     S["body"]))
             p_rows.append(r_data)
 
