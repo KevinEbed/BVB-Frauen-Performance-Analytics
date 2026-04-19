@@ -849,21 +849,23 @@ def style():
     """Return shared ParagraphStyle factory dict."""
     return {
         "cover_title": ParagraphStyle("ct", fontName="Helvetica-Bold",
-            fontSize=26, textColor=BVB_Y, leading=32, alignment=TA_CENTER),
+            fontSize=28, textColor=BVB_Y, leading=34, alignment=TA_CENTER),
         "cover_sub": ParagraphStyle("cs", fontName="Helvetica",
-            fontSize=12, textColor=WHITE, leading=18, alignment=TA_CENTER),
+            fontSize=11, textColor=colors.HexColor("#CCCCCC"), leading=16,
+            alignment=TA_CENTER),
         "cover_meta": ParagraphStyle("cm", fontName="Helvetica",
-            fontSize=9, textColor=MGRAY, leading=14, alignment=TA_CENTER),
+            fontSize=8.5, textColor=MGRAY, leading=13, alignment=TA_CENTER),
         "section": ParagraphStyle("sec", fontName="Helvetica-Bold",
-            fontSize=13, textColor=BVB_Y, leading=18, spaceBefore=14, spaceAfter=4),
+            fontSize=12, textColor=BVB_Y, leading=16, spaceBefore=12, spaceAfter=2),
         "sub": ParagraphStyle("sub", fontName="Helvetica-Bold",
-            fontSize=10, textColor=BVB_BK, leading=13, spaceBefore=8, spaceAfter=2),
+            fontSize=9.5, textColor=colors.HexColor("#1A1A1A"), leading=13,
+            spaceBefore=8, spaceAfter=3),
         "body": ParagraphStyle("body", fontName="Helvetica",
-            fontSize=8.5, textColor=DGRAY, leading=12),
+            fontSize=8.5, textColor=colors.HexColor("#2A2A2A"), leading=12.5),
         "small": ParagraphStyle("sm", fontName="Helvetica",
-            fontSize=7.5, textColor=MGRAY, leading=10),
+            fontSize=7.5, textColor=MGRAY, leading=10.5),
         "insight": ParagraphStyle("ins", fontName="Helvetica-Oblique",
-            fontSize=8, textColor=colors.HexColor("#1A3A2A"), leading=11),
+            fontSize=8.5, textColor=colors.HexColor("#1A1A1A"), leading=12.5),
         "caption": ParagraphStyle("cap", fontName="Helvetica",
             fontSize=7, textColor=MGRAY, leading=9, alignment=TA_CENTER),
     }
@@ -888,34 +890,33 @@ def chart_radar(player_scores: dict, team_scores: dict,
     fig.patch.set_facecolor(MPL_BG)
     ax.set_facecolor(MPL_BG2)
 
-    ax.plot(angles, t_vals, '--', lw=1.2, color="#555555", zorder=2)
-    ax.fill(angles, t_vals, alpha=0.08, color="#555555")
-    ax.plot(angles, p_vals, 'o-', lw=2.2, color=MPL_Y, zorder=3)
-    ax.fill(angles, p_vals, alpha=0.20, color=MPL_Y)
+    ax.plot(angles, t_vals, '--', lw=1.4, color="#666666", zorder=2)
+    ax.fill(angles, t_vals, alpha=0.10, color="#666666")
+    ax.plot(angles, p_vals, 'o-', lw=2.5, color=MPL_Y, zorder=3, markersize=4)
+    ax.fill(angles, p_vals, alpha=0.22, color=MPL_Y)
 
     ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(labels, size=7.5, color="#CCCCCC",
-                       fontweight="bold")
+    ax.set_xticklabels(labels, size=8, color="#CCCCCC", fontweight="bold")
     ax.set_ylim(70, 130)
     ax.set_yticks([80, 90, 100, 110, 120])
     ax.set_yticklabels(["80", "90", "100", "110", "120"],
-                       size=6, color="#444444")
+                       size=6, color="#555555")
     ax.spines["polar"].set_color("#333333")
-    ax.grid(color=MPL_GRID, linewidth=0.6)
+    ax.grid(color=MPL_GRID, linewidth=0.7)
 
     legend_elements = [
         mpatches.Patch(facecolor=MPL_Y, alpha=0.6, label="Spielerin"),
-        mpatches.Patch(facecolor="#555555", alpha=0.4, label="Team Ø"),
+        mpatches.Patch(facecolor="#666666", alpha=0.4, label="Team Ø"),
     ]
     ax.legend(handles=legend_elements, loc="upper right",
-              bbox_to_anchor=(1.4, 1.15), fontsize=7,
+              bbox_to_anchor=(1.45, 1.18), fontsize=7.5,
               framealpha=0, labelcolor="white")
 
     if title:
-        ax.set_title(title, color=MPL_Y, size=8, pad=16, fontweight="bold")
+        ax.set_title(title, color=MPL_Y, size=8.5, pad=18, fontweight="bold")
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=160, bbox_inches="tight",
+    fig.savefig(buf, format="png", dpi=200, bbox_inches="tight",
                 facecolor=MPL_BG, edgecolor="none")
     plt.close(fig)
     buf.seek(0)
@@ -924,13 +925,13 @@ def chart_radar(player_scores: dict, team_scores: dict,
 
 def chart_hbar(players: list, values: list, metric_label: str,
                team_avg=None, highlight_idx=None,
-               figsize=None, max_n=12) -> bytes:
+               figsize=None, max_n=17, dec=2) -> bytes:
     """Horizontal bar chart — ranked players."""
     players = players[:max_n]
     values  = values[:max_n]
     n = len(players)
     if figsize is None:
-        figsize = (7.0, max(1.8, n * 0.38))
+        figsize = (7.2, max(2.0, n * 0.40))
 
     bar_colors = []
     for i, v in enumerate(values):
@@ -947,34 +948,35 @@ def chart_hbar(players: list, values: list, metric_label: str,
     fig.patch.set_facecolor(MPL_BG)
     ax.set_facecolor(MPL_BG2)
 
-    y_pos = list(range(n))
-    bars = ax.barh([p[:20] for p in players[::-1]],
+    bars = ax.barh([p[:22] for p in players[::-1]],
                    values[::-1],
                    color=bar_colors[::-1],
-                   height=0.62, edgecolor="none")
+                   height=0.65, edgecolor="none")
 
     if team_avg is not None:
-        ax.axvline(team_avg, color=MPL_Y, lw=1, ls="--",
-                   alpha=0.7, label=f"Team Ø: {team_avg:.2f}")
-        ax.legend(fontsize=7, framealpha=0, labelcolor="white",
+        label_avg = f"Team Ø: {team_avg:.2f}".replace(".", ",")
+        ax.axvline(team_avg, color=MPL_Y, lw=1.2, ls="--",
+                   alpha=0.75, label=label_avg)
+        ax.legend(fontsize=7.5, framealpha=0, labelcolor="white",
                   loc="lower right")
 
+    val_range = max(values) - min(values) if max(values) != min(values) else 1
     for bar, val in zip(bars, values[::-1]):
-        ax.text(bar.get_width() + (max(values) - min(values)) * 0.01,
+        ax.text(bar.get_width() + val_range * 0.012,
                 bar.get_y() + bar.get_height() / 2,
-                fmt(val, DEC_MAP.get(metric_label.split()[0].lower()[:3], 2)),
-                va="center", ha="left", color="#CCCCCC", size=7.5)
+                fmt(val, dec),
+                va="center", ha="left", color="#CCCCCC", size=7.5, fontweight="bold")
 
-    ax.set_xlabel(metric_label, color=MPL_TXT, size=8)
+    ax.set_xlabel(metric_label, color=MPL_TXT, size=8.5)
     ax.tick_params(colors=MPL_TXT, labelsize=7.5)
     for spine in ax.spines.values():
         spine.set_color("#333333")
     ax.xaxis.label.set_color(MPL_TXT)
-    ax.set_xlim(right=max(values) * 1.13)
-    plt.tight_layout(pad=0.4)
+    ax.set_xlim(right=max(values) + val_range * 0.16)
+    plt.tight_layout(pad=0.5)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight",
+    fig.savefig(buf, format="png", dpi=190, bbox_inches="tight",
                 facecolor=MPL_BG, edgecolor="none")
     plt.close(fig)
     buf.seek(0)
@@ -1022,7 +1024,7 @@ def chart_trend(player_name: str, df: pd.DataFrame,
     plt.tight_layout(pad=0.4)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight",
+    fig.savefig(buf, format="png", dpi=190, bbox_inches="tight",
                 facecolor=MPL_BG, edgecolor="none")
     plt.close(fig)
     buf.seek(0)
@@ -1030,14 +1032,14 @@ def chart_trend(player_name: str, df: pd.DataFrame,
 
 
 def chart_percentile_bar(player_name: str, df: pd.DataFrame,
-                         session: str, figsize=(7.0, 3.0)) -> bytes:
+                         session: str, figsize=(7.0, 3.2)) -> bytes:
     """Show player Z-score per metric vs 100 baseline — percentile style."""
     p_row = df[(df["name"] == player_name) & (df["session"] == session)]
     if p_row.empty:
         return None
     row = p_row.iloc[0]
 
-    metrics_to_show = ["cmj", "dj_rsi", "t5", "t20", "agility", "dribbling", "vo2max"]
+    metrics_to_show = ["cmj", "dj_rsi", "t5", "t20", "vo2max"]
     labels, zscores, bar_colors = [], [], []
 
     for m in metrics_to_show:
@@ -1046,12 +1048,14 @@ def chart_percentile_bar(player_name: str, df: pd.DataFrame,
             continue
         labels.append(METRIC_LABELS.get(m, m))
         zscores.append(z)
-        if z >= 110:
+        if z >= 112:
             bar_colors.append("#22C55E")
-        elif z >= 100:
+        elif z >= 104:
             bar_colors.append("#3B82F6")
-        elif z >= 90:
-            bar_colors.append(MPL_DARK)
+        elif z >= 96:
+            bar_colors.append("#555555")
+        elif z >= 88:
+            bar_colors.append("#F59E0B")
         else:
             bar_colors.append("#EF4444")
 
@@ -1063,27 +1067,29 @@ def chart_percentile_bar(player_name: str, df: pd.DataFrame,
     ax.set_facecolor(MPL_BG2)
 
     x = np.arange(len(labels))
-    bars = ax.bar(x, zscores, color=bar_colors, width=0.6, edgecolor="none")
-    ax.axhline(100, color=MPL_Y, lw=1.2, ls="--", alpha=0.8, label="Team Ø (Z=100)")
+    bars = ax.bar(x, zscores, color=bar_colors, width=0.58, edgecolor="none")
+    ax.axhline(100, color="#666666", lw=1.2, ls="--", alpha=0.8,
+               label="Team Ø (Z=100)")
 
     for bar, z in zip(bars, zscores):
         ax.text(bar.get_x() + bar.get_width() / 2,
-                bar.get_height() + 0.5,
+                bar.get_height() + 0.8,
                 f"{z:.0f}", ha="center", va="bottom",
-                color="#CCCCCC", size=7.5, fontweight="bold")
+                color="#DDDDDD", size=8, fontweight="bold")
 
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, size=7.5, color=MPL_TXT, rotation=20, ha="right")
-    ax.set_ylim(70, max(130, max(zscores) + 10))
-    ax.set_ylabel("Z-Score", color=MPL_TXT, size=8)
+    ax.set_xticklabels(labels, size=8, color=MPL_TXT, rotation=18, ha="right")
+    ax.set_ylim(70, max(132, max(zscores) + 12))
+    ax.set_ylabel("Z-Score", color=MPL_TXT, size=8.5)
     ax.tick_params(colors=MPL_TXT, labelsize=7.5)
     for spine in ax.spines.values():
         spine.set_color("#333333")
-    ax.legend(fontsize=7, framealpha=0, labelcolor="white", loc="upper right")
-    plt.tight_layout(pad=0.4)
+    ax.grid(axis="y", color=MPL_GRID, lw=0.5, alpha=0.6)
+    ax.legend(fontsize=7.5, framealpha=0, labelcolor="white", loc="upper right")
+    plt.tight_layout(pad=0.5)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight",
+    fig.savefig(buf, format="png", dpi=190, bbox_inches="tight",
                 facecolor=MPL_BG, edgecolor="none")
     plt.close(fig)
     buf.seek(0)
@@ -1101,16 +1107,18 @@ def img_flowable(png_bytes: bytes, width_cm=16.0) -> Image:
 
 def rl_rule(story, color=BVB_Y, thickness=1.5):
     story.append(HRFlowable(width="100%", thickness=thickness,
-                             color=color, spaceAfter=4, spaceBefore=4))
+                             color=color, spaceAfter=5, spaceBefore=3))
 
 
 def rl_section(story, text, S):
-    story.append(Spacer(1, 0.25 * cm))
+    story.append(Spacer(1, 0.3 * cm))
     story.append(Paragraph(text.upper(), S["section"]))
-    rl_rule(story)
+    story.append(HRFlowable(width="100%", thickness=1.5, color=BVB_Y,
+                             spaceAfter=6, spaceBefore=2))
 
 
 def rl_sub(story, text, S):
+    story.append(Spacer(1, 0.1 * cm))
     story.append(Paragraph(text, S["sub"]))
 
 
@@ -1118,47 +1126,54 @@ def styled_table(rows, col_widths, header_rows=1, zebra=True,
                  best_row=None, worst_row=None):
     t = Table(rows, colWidths=col_widths, repeatRows=header_rows)
     cmds = [
-        ("BACKGROUND",   (0, 0), (-1, header_rows - 1), BVB_DG),
+        ("BACKGROUND",   (0, 0), (-1, header_rows - 1), colors.HexColor("#1A1A1A")),
         ("TEXTCOLOR",    (0, 0), (-1, header_rows - 1), BVB_Y),
         ("FONTNAME",     (0, 0), (-1, header_rows - 1), "Helvetica-Bold"),
         ("FONTSIZE",     (0, 0), (-1, -1), 8),
         ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING",   (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 3),
-        ("GRID",         (0, 0), (-1, -1), 0.25, colors.HexColor("#DDDDDD")),
+        ("LEFTPADDING",  (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING",   (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING",(0, 0), (-1, -1), 4),
+        ("LINEBELOW",    (0, header_rows - 1), (-1, header_rows - 1), 1.5, BVB_Y),
+        ("GRID",         (0, header_rows), (-1, -1), 0.25, colors.HexColor("#E8E8E8")),
+        ("BOX",          (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
     ]
     if zebra:
         for i in range(header_rows, len(rows)):
-            bg = WHITE if i % 2 == 0 else LGRAY
+            bg = WHITE if i % 2 == 0 else colors.HexColor("#F9F9F9")
             cmds.append(("BACKGROUND", (0, i), (-1, i), bg))
     if best_row is not None:
         cmds.append(("BACKGROUND", (0, best_row), (-1, best_row),
                      colors.HexColor("#DCFCE7")))
+        cmds.append(("TEXTCOLOR",  (0, best_row), (-1, best_row),
+                     colors.HexColor("#166534")))
     if worst_row is not None:
         cmds.append(("BACKGROUND", (0, worst_row), (-1, worst_row),
                      colors.HexColor("#FEE2E2")))
+        cmds.append(("TEXTCOLOR",  (0, worst_row), (-1, worst_row),
+                     colors.HexColor("#991B1B")))
     t.setStyle(TableStyle(cmds))
     return t
 
 
 def score_card_table(cards: list) -> Table:
     """
-    Render a row of metric cards.
+    Render a row of premium metric cards matching website style.
     cards = list of (label, value, badge_text, badge_color)
     """
     S = style()
     CARD_W = W_BODY / len(cards)
     cells = []
     for label, value, badge, badge_color in cards:
-        badge_rl = colors.HexColor(badge_color)
+        # Value colour: use badge colour; grey "AVERAGE" cards get dark value text
+        val_color = badge_color if badge_color not in ("#888888", "#555555") else "#0A0A0A"
         cell_content = [
-            Paragraph(f'<font size="7" color="#888888">{label}</font>', S["caption"]),
-            Spacer(1, 3),
-            Paragraph(f'<b><font size="16" color="#0A0A0A">{value}</font></b>',
+            Paragraph(f'<font size="6.5" color="#888888">{label}</font>', S["caption"]),
+            Spacer(1, 5),
+            Paragraph(f'<b><font size="18" color="{val_color}">{value}</font></b>',
                       S["caption"]),
-            Spacer(1, 3),
+            Spacer(1, 4),
             Paragraph(f'<font size="6.5" color="{badge_color}"><b>{badge}</b></font>',
                       S["caption"]),
         ]
@@ -1166,12 +1181,14 @@ def score_card_table(cards: list) -> Table:
 
     t = Table([cells], colWidths=[CARD_W] * len(cards))
     cmds = [
-        ("VALIGN",      (0, 0), (-1, -1), "MIDDLE"),
-        ("ALIGN",       (0, 0), (-1, -1), "CENTER"),
-        ("TOPPADDING",  (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING",(0,0), (-1, -1), 8),
-        ("BACKGROUND",  (0, 0), (-1, -1), LGRAY),
-        ("GRID",        (0, 0), (-1, -1), 0.5, colors.HexColor("#DDDDDD")),
+        ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN",        (0, 0), (-1, -1), "CENTER"),
+        ("TOPPADDING",   (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING",(0, 0), (-1, -1), 10),
+        ("BACKGROUND",   (0, 0), (-1, -1), colors.HexColor("#F5F5F5")),
+        ("BOX",          (0, 0), (-1, -1), 0.5, colors.HexColor("#DDDDDD")),
+        ("LINEAFTER",    (0, 0), (-2, -1), 0.5, colors.HexColor("#DDDDDD")),
+        ("LINEBELOW",    (0, 0), (-1, -1), 2.5, BVB_Y),
     ]
     t.setStyle(TableStyle(cmds))
     return t
@@ -1180,29 +1197,45 @@ def score_card_table(cards: list) -> Table:
 def cover_page_elements(title: str, subtitle: str,
                         session: str, n_players: int, S: dict) -> list:
     elems = []
-    # Full-width black header band
-    band = Table([[""]], colWidths=[W_BODY], rowHeights=[3.5 * cm])
-    band.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), BVB_BK),
+
+    # Premium header band — dark background with BVB branding text
+    brand_style = ParagraphStyle("brand", fontName="Helvetica-Bold",
+        fontSize=11, textColor=BVB_Y, leading=16, alignment=TA_CENTER)
+    dept_style  = ParagraphStyle("dept",  fontName="Helvetica",
+        fontSize=8,  textColor=colors.HexColor("#888888"), leading=12, alignment=TA_CENTER)
+
+    header_inner = Table(
+        [[Paragraph("BVB FRAUEN", brand_style)],
+         [Paragraph("Performance Diagnostics · Sports Science Department", dept_style)]],
+        colWidths=[W_BODY],
+    )
+    header_inner.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), BVB_BK),
+        ("TOPPADDING",    (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
+        ("LINEABOVE",     (0, 0), (-1, 0),  4, BVB_Y),
+        ("LINEBELOW",     (0, -1),(-1, -1), 1, colors.HexColor("#333333")),
     ]))
-    elems.append(band)
+    elems.append(header_inner)
     elems.append(Spacer(1, 0.5 * cm))
 
     # BVB yellow accent line
-    elems.append(HRFlowable(width="100%", thickness=4, color=BVB_Y,
-                             spaceAfter=16, spaceBefore=0))
+    elems.append(HRFlowable(width="100%", thickness=3.5, color=BVB_Y,
+                             spaceAfter=14, spaceBefore=0))
 
     elems.append(Paragraph(title, S["cover_title"]))
-    elems.append(Spacer(1, 0.3 * cm))
+    elems.append(Spacer(1, 0.25 * cm))
     elems.append(Paragraph(subtitle, S["cover_sub"]))
-    elems.append(Spacer(1, 0.4 * cm))
-    elems.append(HRFlowable(width="60%", thickness=1, color=DGRAY,
-                             spaceAfter=12, spaceBefore=0))
+    elems.append(Spacer(1, 0.35 * cm))
+    elems.append(HRFlowable(width="55%", thickness=0.75, color=DGRAY,
+                             spaceAfter=10, spaceBefore=0))
     elems.append(Paragraph(
         f"Session: <b>{session}</b>   ·   {n_players} Spielerinnen getestet   ·   "
         f"{datetime.now().strftime('%d.%m.%Y')}",
         S["cover_meta"]))
-    elems.append(Spacer(1, 0.3 * cm))
+    elems.append(Spacer(1, 0.2 * cm))
     elems.append(Paragraph(
         "BVB Frauen · Performance Diagnostics · Sports Science Department",
         S["cover_meta"]))
@@ -1236,7 +1269,7 @@ def auto_insights(df: pd.DataFrame, session: str, player: str = None) -> list:
             if z >= 108:
                 insights.append(f"✦ {label}: überdurchschnittlich stark (Z={z:.0f}) — {badge}")
             elif z <= 92:
-                insights.append(f"▸ {label}: Entwicklungspotenzial (Z={z:.0f}) — Trainingsempfehlung")
+                insights.append(f"■ {label}: Entwicklungspotenzial (Z={z:.0f}) — Trainingsempfehlung")
     else:
         # Team insights
         for m, label, hib in METRICS_CHECKED:
@@ -1249,7 +1282,7 @@ def auto_insights(df: pd.DataFrame, session: str, player: str = None) -> list:
             if team_z >= 105:
                 insights.append(f"✦ {label}: Team liegt über historischem Schnitt (Ø Z={team_z:.0f})")
             elif team_z <= 95:
-                insights.append(f"▸ {label}: Teamschnitt unter Referenzwert (Ø Z={team_z:.0f}) — Fokus empfohlen")
+                insights.append(f"■ {label}: Teamschnitt unter Referenzwert (Ø Z={team_z:.0f}) — Fokus empfohlen")
 
     return insights[:5]
 
@@ -1284,16 +1317,21 @@ def training_recommendations(player: str, df: pd.DataFrame, session: str) -> lis
 def make_footer_canvas(session_label: str):
     def footer(canvas, doc):
         canvas.saveState()
+        # Black footer band
         canvas.setFillColor(BVB_BK)
-        canvas.rect(0, 0, W_PAGE, 1.0 * cm, fill=1, stroke=0)
+        canvas.rect(0, 0, W_PAGE, 1.1 * cm, fill=1, stroke=0)
+        # Yellow accent line above footer
         canvas.setFillColor(BVB_Y)
-        canvas.rect(0, 1.0 * cm, W_PAGE, 0.08 * cm, fill=1, stroke=0)
-        canvas.setFont("Helvetica", 6.5)
-        canvas.setFillColor(colors.HexColor("#888888"))
-        canvas.drawString(MARGIN, 0.35 * cm,
+        canvas.rect(0, 1.1 * cm, W_PAGE, 0.12 * cm, fill=1, stroke=0)
+        # Footer text
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(colors.HexColor("#999999"))
+        canvas.drawString(MARGIN, 0.38 * cm,
             f"BVB Frauen · Performance Diagnostics · Session: {session_label}")
+        canvas.setFont("Helvetica-Bold", 7)
+        canvas.setFillColor(colors.HexColor("#BBBBBB"))
         canvas.drawRightString(
-            W_PAGE - MARGIN, 0.35 * cm,
+            W_PAGE - MARGIN, 0.38 * cm,
             f"Seite {doc.page}  ·  Generiert am {datetime.now().strftime('%d.%m.%Y')}")
         canvas.restoreState()
     return footer
@@ -1464,7 +1502,8 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
         team_avg = np.mean(vals_last)
         bar_bytes = chart_hbar(players_with_val, vals_last,
                                 METRIC_LABELS.get(m, m),
-                                team_avg=team_avg)
+                                team_avg=team_avg,
+                                dec=DEC_MAP.get(m, 2))
 
         # Table alongside
         col_w_r = [4.5*cm] + [min(2.6*cm, (W_BODY-4.5*cm)/len(ALL_SESSIONS))] * len(ALL_SESSIONS)
@@ -1514,14 +1553,17 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
         t20_v  = p_last_row.get("t20")
         vo2_v  = p_last_row.get("vo2max")
 
+        rsi_v = p_last_row.get("dj_rsi")
         p_cards = [
-            ("OVERALL", f"Z = {overall_z:.0f}", badge, bc),
-            ("CMJ", fmt(cmj_v, 1) + " cm" if cmj_v else "—",
+            ("OVERALL",    f"Z = {overall_z:.0f}", badge, bc),
+            ("CMJ",        fmt(cmj_v, 1) + " cm" if cmj_v else "—",
              *z_to_badge(hist_z("cmj", cmj_v))),
             ("SPRINT 20m", fmt(t20_v, 2) + " s" if t20_v else "—",
              *z_to_badge(hist_z("t20", t20_v))),
-            ("VO2MAX", fmt(vo2_v, 1) if vo2_v else "—",
+            ("VO2MAX",     fmt(vo2_v, 1) if vo2_v else "—",
              *z_to_badge(hist_z("vo2max", vo2_v))),
+            ("DJ RSI",     fmt(rsi_v, 2) if rsi_v else "—",
+             *z_to_badge(hist_z("dj_rsi", rsi_v))),
         ]
 
         radar_bytes = chart_radar(p_axis, t_axis,
@@ -1590,9 +1632,10 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
             for rec in recs_p:
                 block.append(Paragraph(rec, S["body"]))
 
-        block.append(Spacer(1, 0.4 * cm))
-        block.append(HRFlowable(width="100%", thickness=0.5,
-                                 color=colors.HexColor("#DDDDDD")))
+        block.append(Spacer(1, 0.45 * cm))
+        block.append(HRFlowable(width="100%", thickness=0.75,
+                                 color=colors.HexColor("#CCCCCC"),
+                                 spaceAfter=2, spaceBefore=2))
         story.append(KeepTogether(block))
 
     doc.build(story,
