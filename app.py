@@ -775,15 +775,16 @@ PDF_DEC_MAP = {
     "t20":2,"t30":2,"agility":2,"dribbling":2,"vo2max":2,
 }
 
-# 6-axis grouped radar for PDF — matches BVB sports-science print format
-# (website uses the 8-axis individual-metric radar; this is the PDF-only grouping)
+# 8-axis individual-metric radar — matches website radar exactly
 PDF_RADAR_AXES = {
-    "Sprint":              ["t5", "t10"],
-    "Acceleration":        ["t20", "t30"],
-    "Power":               ["cmj"],
-    "Reactivity":          ["dj_rsi"],
-    "Endurance":           ["vo2max"],
-    "Agility & Technique": ["agility", "dribbling"],
+    "CMJ":       ["cmj"],
+    "DJ RSI":    ["dj_rsi"],
+    "t5":        ["t5"],
+    "t10":       ["t10"],
+    "t20":       ["t20"],
+    "Agility":   ["agility"],
+    "Dribbling": ["dribbling"],
+    "VO2max":    ["vo2max"],
 }
 PDF_RADAR_LABELS = list(PDF_RADAR_AXES.keys())
 
@@ -818,7 +819,7 @@ def axis_z(metrics_list, player_row):
 
 
 def player_axis_scores(row):
-    """Returns dict of {axis_label: z_score} for the 6-axis PDF radar."""
+    """Returns dict of {metric_label: z_score} for the 8-axis PDF radar."""
     return {ax: axis_z(metrics, row) for ax, metrics in PDF_RADAR_AXES.items()}
 
 
@@ -845,14 +846,16 @@ def style():
             fontSize=8.5, textColor=colors.HexColor("#1A1A1A"), leading=12.5),
         "caption": ParagraphStyle("cap", fontName="Helvetica",
             fontSize=7, textColor=MGRAY, leading=9, alignment=TA_CENTER),
+        "th": ParagraphStyle("th", fontName="Helvetica-Bold",
+            fontSize=8, textColor=BVB_Y, leading=12),
     }
 
 
 # ── CHART FUNCTIONS ───────────────────────────────────────────────────────────
 
 def chart_radar(player_scores: dict, team_scores: dict,
-                title="", figsize=(4.2, 4.2)) -> bytes:
-    """6-axis grouped radar for PDF: player (yellow) vs team average (grey)."""
+                title="", figsize=(4.8, 4.8)) -> bytes:
+    """8-axis individual-metric radar for PDF: player (yellow) vs team average (grey)."""
     labels = PDF_RADAR_LABELS
     N = len(labels)
     angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
@@ -873,7 +876,7 @@ def chart_radar(player_scores: dict, team_scores: dict,
     ax.fill(angles, p_vals, alpha=0.22, color=MPL_Y)
 
     ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(labels, size=8, color="#CCCCCC", fontweight="bold")
+    ax.set_xticklabels(labels, size=7, color="#CCCCCC", fontweight="bold")
     ax.set_ylim(70, 130)
     ax.set_yticks([80, 90, 100, 110, 120])
     ax.set_yticklabels(["80", "90", "100", "110", "120"],
@@ -886,11 +889,11 @@ def chart_radar(player_scores: dict, team_scores: dict,
         mpatches.Patch(facecolor="#666666", alpha=0.4, label="Team Ø"),
     ]
     ax.legend(handles=legend_elements, loc="upper right",
-              bbox_to_anchor=(1.45, 1.18), fontsize=7.5,
+              bbox_to_anchor=(1.55, 1.18), fontsize=7.5,
               framealpha=0, labelcolor="white")
 
     if title:
-        ax.set_title(title, color=MPL_Y, size=8.5, pad=18, fontweight="bold")
+        ax.set_title(title, color=MPL_Y, size=8.5, pad=20, fontweight="bold")
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=200, bbox_inches="tight",
@@ -1411,7 +1414,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
             ("Fitness",["agility","dribbling","vo2max"]),
         ]
         col_w = [3.2*cm, 2.5*cm, 2.3*cm, 2.0*cm, 2.3*cm, 2.3*cm]
-        hrow = [Paragraph(f"<b>{h}</b>", S["body"])
+        hrow = [Paragraph(h, S["th"])
                 for h in ["Gruppe · Metrik", "Messgröße", "Mittelwert", "SD", "Min", "Max"]]
         rows = [hrow]
         for grp, metrics in METRIC_GROUPS:
@@ -1483,8 +1486,8 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
 
         # Table alongside
         col_w_r = [4.5*cm] + [min(2.6*cm, (W_BODY-4.5*cm)/len(ALL_SESSIONS))] * len(ALL_SESSIONS)
-        hrow = [Paragraph("<b>Spielerin</b>", S["body"])] + \
-               [Paragraph(f"<b>{s}</b>", S["body"]) for s in ALL_SESSIONS]
+        hrow = [Paragraph("Spielerin", S["th"])] + \
+               [Paragraph(s, S["th"]) for s in ALL_SESSIONS]
         t_rows = [hrow]
         for p in sorted_players:
             row_data = [Paragraph(p, S["body"])]
@@ -1547,8 +1550,8 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
 
         dec_map = PDF_DEC_MAP
         col_w_p = [3.8*cm] + [min(2.8*cm, (W_BODY-3.8*cm)/len(p_sessions))] * len(p_sessions)
-        hrow = [Paragraph("<b>Test</b>", S["body"])] + \
-               [Paragraph(f"<b>{s}</b>", S["body"]) for s in p_sessions]
+        hrow = [Paragraph("Test", S["th"])] + \
+               [Paragraph(s, S["th"]) for s in p_sessions]
         p_rows = [hrow]
         for grp, metrics in [
             ("Sprint", ["t5","t10","t20","t30"]),
@@ -1731,8 +1734,8 @@ def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
     rl_section(story, "Messdaten · Vollständige Historie", S)
 
     col_w_p = [3.8*cm] + [min(2.8*cm, (W_BODY-3.8*cm)/len(p_sessions))]*len(p_sessions)
-    hrow = [Paragraph("<b>Test</b>", S["body"])] + \
-           [Paragraph(f"<b>{s}</b>", S["body"]) for s in p_sessions]
+    hrow = [Paragraph("Test", S["th"])] + \
+           [Paragraph(s, S["th"]) for s in p_sessions]
     p_rows = [hrow]
 
     for grp, metrics in [
