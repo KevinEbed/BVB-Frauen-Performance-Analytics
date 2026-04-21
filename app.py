@@ -133,6 +133,7 @@ def team_radar_z(df: pd.DataFrame, metric: str, sessions: list) -> list:
 # ENGINE (same logic as bvb_engine.py, adapted for Streamlit state)
 # ─────────────────────────────────────────────
 
+@st.cache_data(show_spinner=False)
 def compute_z_scores(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     for metric, info in RAW_METRICS.items():
@@ -185,7 +186,7 @@ def parse_excel(file, session_label: str) -> pd.DataFrame:
         for key, ci in col_map.items():
             try:
                 rec[key] = float(str(row.iloc[ci]).replace(",", "."))
-            except:
+            except (ValueError, TypeError):
                 rec[key] = None
         for key in RAW_METRICS:
             if key not in rec:
@@ -201,6 +202,7 @@ def get_df() -> pd.DataFrame:
     return compute_z_scores(raw)
 
 
+@st.cache_data(show_spinner=False)
 def compute_injury_flags(df: pd.DataFrame, threshold: float = 8.0):
     sessions = sorted(df["session"].unique())
     if len(sessions) < 2:
@@ -229,6 +231,7 @@ def compute_injury_flags(df: pd.DataFrame, threshold: float = 8.0):
     return flags
 
 
+@st.cache_data(show_spinner=False)
 def predict_next(df: pd.DataFrame, name: str) -> dict:
     hist = df[df["name"] == name].sort_values("session")
     if len(hist) < 2:
@@ -257,6 +260,7 @@ def predict_next(df: pd.DataFrame, name: str) -> dict:
     return preds
 
 
+@st.cache_data(show_spinner=False)
 def compute_clusters(df: pd.DataFrame, session: str = None):
     if session is None:
         session = sorted(df["session"].unique())[-1]
@@ -302,6 +306,7 @@ def compute_clusters(df: pd.DataFrame, session: str = None):
     return result
 
 
+@st.cache_data(show_spinner=False)
 def generate_commentary(df: pd.DataFrame, name: str) -> dict:
     sessions = sorted(df["session"].unique())
     last = sessions[-1]
@@ -322,7 +327,6 @@ def generate_commentary(df: pd.DataFrame, name: str) -> dict:
             else "solides" if avg_z >= 95
             else "entwicklungsfähiges")
     overall = f"{name} zeigt in der Session {last} ein {tone} Leistungsprofil und gehört {level} (Ø Z-Score: {avg_z:.1f})."
-    team_avg = df[(df["session"] == last) & df["cmj"].notna()]
     strengths, weaknesses = [], []
     for metric, info in RAW_METRICS.items():
         zk = f"{metric}_Z"
@@ -373,6 +377,7 @@ PLOTLY_LAYOUT = dict(
 )
 
 
+@st.cache_data(show_spinner=False)
 def radar_chart(df: pd.DataFrame, names: list, sessions: list = None, title: str = "") -> go.Figure:
     fig = go.Figure()
     all_sessions = sorted(df["session"].unique())
@@ -422,6 +427,7 @@ def radar_chart(df: pd.DataFrame, names: list, sessions: list = None, title: str
     return fig
 
 
+@st.cache_data(show_spinner=False)
 def trend_chart(df: pd.DataFrame, name: str) -> go.Figure:
     hist = df[df["name"] == name].sort_values("session")
     sessions = hist["session"].tolist()
@@ -475,6 +481,7 @@ def trend_chart(df: pd.DataFrame, name: str) -> go.Figure:
     return fig
 
 
+@st.cache_data(show_spinner=False)
 def comparison_bar(df: pd.DataFrame, name: str, session: str) -> go.Figure:
     rec = df[(df["name"] == name) & (df["session"] == session)]
     if rec.empty:
@@ -519,6 +526,7 @@ def comparison_bar(df: pd.DataFrame, name: str, session: str) -> go.Figure:
     return fig
 
 
+@st.cache_data(show_spinner=False)
 def ranked_bar_chart(df: pd.DataFrame, metric: str, sessions_to_show: list = None) -> go.Figure:
     """
     Ranked bar chart per metric — replicating the Säulendiagramme view.
@@ -642,6 +650,7 @@ def ranked_bar_chart(df: pd.DataFrame, metric: str, sessions_to_show: list = Non
     return fig
 
 
+@st.cache_data(show_spinner=False)
 def team_radar_chart(df: pd.DataFrame) -> go.Figure:
     sessions = sorted(df["session"].unique())
     fig = go.Figure()
@@ -863,15 +872,22 @@ def sprint_curve_plotly(player_name: str, row, team_df: pd.DataFrame,
 
     fig.update_layout(
         **PLOTLY_LAYOUT,
-        title=dict(text=title or f"{player_name.split()[-1]} · Sprint Kurve",
-                   font_color="#FDE000", font_size=13),
-        xaxis=dict(title="Distanz (m)", tickvals=distances,
-                   tickfont=dict(color="#666"), titlefont=dict(color="#888"),
-                   gridcolor="#1a1a1a"),
-        yaxis=dict(title="Zeit (s)  ↓ = schneller",
-                   tickfont=dict(color="#555"), titlefont=dict(color="#888"),
-                   gridcolor="#1a1a1a"),
-        legend=dict(font_color="#666", bgcolor="rgba(0,0,0,0)"),
+        title=dict(
+            text=title or f"{player_name.split()[-1]} · Sprint Kurve",
+            font=dict(color="#FDE000", size=13),
+        ),
+        xaxis=dict(
+            title=dict(text="Distanz (m)", font=dict(color="#888", size=11)),
+            tickvals=distances,
+            tickfont=dict(color="#666", size=10),
+            gridcolor="#1a1a1a",
+        ),
+        yaxis=dict(
+            title=dict(text="Zeit (s)  ↓ = schneller", font=dict(color="#888", size=11)),
+            tickfont=dict(color="#555", size=10),
+            gridcolor="#1a1a1a",
+        ),
+        legend=dict(font=dict(color="#666"), bgcolor="rgba(0,0,0,0)"),
         height=320,
     )
     return fig
@@ -913,6 +929,7 @@ def sprint_phase_bar_plotly(player_name: str, phases: dict,
     return fig
 
 
+@st.cache_data(show_spinner=False)
 def sprint_phase_rankings_plotly(df: pd.DataFrame, session: str) -> dict:
     """Return {phase_label: go.Figure} — team ranking per phase."""
     sess_df = df[df["session"] == session].copy()
@@ -1484,6 +1501,7 @@ def cover_page_elements(title: str, subtitle: str,
     return elems
 
 
+@st.cache_data(show_spinner=False)
 def auto_insights(df: pd.DataFrame, session: str, player: str = None) -> list:
     """Generate bullet-point insights from the data."""
     sdf = df[df["session"] == session]
@@ -1529,6 +1547,7 @@ def auto_insights(df: pd.DataFrame, session: str, player: str = None) -> list:
     return insights[:5]
 
 
+@st.cache_data(show_spinner=False)
 def training_recommendations(player: str, df: pd.DataFrame, session: str) -> list:
     """Generate training focus suggestions based on Z-scores."""
     p_row = df[(df["name"] == player) & (df["session"] == session)]
@@ -2112,12 +2131,10 @@ def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
     story.append(Spacer(1, 0.4 * cm))
 
     # Score cards row 1
-    cmj_v  = p_last_row.get("cmj")
-    t5_v   = p_last_row.get("t5")
-    t20_v  = p_last_row.get("t20")
-    vo2_v  = p_last_row.get("vo2max")
-    rsi_v  = p_last_row.get("dj_rsi")
-    agl_v  = p_last_row.get("agility")
+    cmj_v = p_last_row.get("cmj")
+    t20_v = p_last_row.get("t20")
+    vo2_v = p_last_row.get("vo2max")
+    rsi_v = p_last_row.get("dj_rsi")
 
     cards = [
         ("OVERALL SCORE", f"Z = {overall_z:.0f}", badge, bc),
@@ -2397,7 +2414,7 @@ with tab_overview:
     st.divider()
     col1, col2 = st.columns(2)
     with col1:
-        st.plotly_chart(team_radar_chart(df), width='stretch', key="team_radar")
+        st.plotly_chart(team_radar_chart(df), use_container_width=True, key="team_radar")
     with col2:
         st.markdown("#### Meistverbesserte")
         if prev_sess:
@@ -2421,7 +2438,7 @@ with tab_overview:
                 imp_df.index = range(1, len(imp_df) + 1)
                 st.dataframe(
                     imp_df.style.background_gradient(cmap="RdYlGn", subset=["Ø Δ Z"]),
-                    width='stretch'
+                    use_container_width=True
                 )
         else:
             st.info("Lade eine zweite Session um Vergleiche zu sehen.")
@@ -2453,7 +2470,7 @@ with tab_overview:
                                         xaxis=dict(tickfont=dict(color="#666")),
                                         yaxis=dict(tickfont=dict(color="#555")))
                 fig_trend.add_hline(y=0, line_color="#333")
-                st.plotly_chart(fig_trend, width='stretch', key="team_trend")
+                st.plotly_chart(fig_trend, use_container_width=True, key="team_trend")
         else:
             st.info("Zwei Sessions benötigt.")
 
@@ -2499,12 +2516,12 @@ with tab_player:
             with c1:
                 player_sessions = sorted(df[df["name"] == selected_player]["session"].unique())
                 st.plotly_chart(radar_chart(df, [selected_player], player_sessions,
-                                           title=f"{selected_player} · Radar"), width='stretch', key=f"player_radar_{selected_player}")
+                                           title=f"{selected_player} · Radar"), use_container_width=True, key=f"player_radar_{selected_player}")
             with c2:
                 st.plotly_chart(comparison_bar(df, selected_player, selected_session),
-                                width='stretch', key=f"player_comp_{selected_player}_{selected_session}")
+                                use_container_width=True, key=f"player_comp_{selected_player}_{selected_session}")
 
-            st.plotly_chart(trend_chart(df, selected_player), width='stretch', key=f"player_trend_{selected_player}")
+            st.plotly_chart(trend_chart(df, selected_player), use_container_width=True, key=f"player_trend_{selected_player}")
 
             # ── Sprint Phase Breakdown (inline in player tab) ───────────
             if any(pd.notna(rec.get(c)) for c in ["t5", "t10", "t20", "t30"]):
@@ -2539,13 +2556,13 @@ with tab_player:
                 with _csp1:
                     st.plotly_chart(
                         sprint_curve_plotly(selected_player, rec, _sp_sess_df, _sp_best_row),
-                        width='stretch',
+                        use_container_width=True,
                         key=f"ptab_curve_{selected_player}_{selected_session}",
                     )
                 with _csp2:
                     st.plotly_chart(
                         sprint_phase_bar_plotly(selected_player, _sp_phases, _sp_team_ph, _sp_best_ph),
-                        width='stretch',
+                        use_container_width=True,
                         key=f"ptab_phases_{selected_player}_{selected_session}",
                     )
                 for _ins in sprint_phase_insights(_sp_phases, _sp_team_ph):
@@ -2568,7 +2585,7 @@ with tab_player:
                     row["Team Ø"] = round(ta, 3) if pd.notna(ta) else None
                     raw_rows.append(row)
                 raw_df = pd.DataFrame(raw_rows).set_index("Metrik")
-                st.dataframe(raw_df, width='stretch')
+                st.dataframe(raw_df, use_container_width=True)
 
             with c4:
                 st.markdown("#### Auswertung")
@@ -2605,7 +2622,7 @@ with tab_player:
                         lambda v: "color: #4ADE80" if v == "↑" else ("color: #F87171" if v == "↓" else ""),
                         subset=["Trend"]
                     ),
-                    width='stretch'
+                    use_container_width=True
                 )
 
 # ══════════════════════════════════════════════
@@ -2630,7 +2647,7 @@ with tab_compare:
         c1, c2 = st.columns(2)
         with c1:
             st.plotly_chart(radar_chart(df, selected_players, [cmp_session],
-                                       title="Radar Vergleich"), width='stretch', key="cmp_radar")
+                                       title="Radar Vergleich"), use_container_width=True, key="cmp_radar")
         with c2:
             cmp_metric = st.selectbox("Metrik", list(RAW_METRICS.keys()),
                                       format_func=lambda x: RAW_METRICS[x]["label"])
@@ -2653,7 +2670,7 @@ with tab_compare:
                                       showlegend=False,
                                       xaxis=dict(tickfont=dict(color="#666")),
                                       yaxis=dict(tickfont=dict(color="#555")))
-                st.plotly_chart(fig_cmp, width='stretch', key=f"cmp_bar_{cmp_metric}")
+                st.plotly_chart(fig_cmp, use_container_width=True, key=f"cmp_bar_{cmp_metric}")
 
         st.markdown("#### Detaillierter Vergleich")
         rows = []
@@ -2671,7 +2688,7 @@ with tab_compare:
                 row["★ Best"] = [k.split()[-1] for k, v in vals.items() if v == best][0]
             rows.append(row)
         det_df = pd.DataFrame(rows).set_index("Metrik")
-        st.dataframe(det_df, width='stretch')
+        st.dataframe(det_df, use_container_width=True)
 
         if len(sessions) > 1:
             st.markdown("#### Zeitverlauf")
@@ -2696,7 +2713,7 @@ with tab_compare:
                                  xaxis=dict(tickfont=dict(color="#666")),
                                  yaxis=dict(tickfont=dict(color="#555")),
                                  legend=dict(font_color="#666"))
-            st.plotly_chart(fig_tl, width='stretch', key=f"cmp_trend_{tl_metric}")
+            st.plotly_chart(fig_tl, use_container_width=True, key=f"cmp_trend_{tl_metric}")
 
 # ══════════════════════════════════════════════
 # RANKINGS
@@ -2733,7 +2750,7 @@ with tab_ranking:
 
     display_cols = ["#", "name", "Metrik"] + (["Δ vs prev"] if prev_sess else [])
     rk_display = rk_df[display_cols].rename(columns={"name": "Spielerin"}).set_index("#")
-    st.dataframe(rk_display, width='stretch', height=600)
+    st.dataframe(rk_display, use_container_width=True, height=600)
 
 
 # ══════════════════════════════════════════════
@@ -2764,7 +2781,7 @@ with tab_saeulen:
     else:
         st.plotly_chart(
             ranked_bar_chart(df, saeulen_metric, saeulen_sessions),
-            width='stretch',
+            use_container_width=True,
             key=f"saeul_main_{saeulen_metric}",
         )
 
@@ -2783,7 +2800,7 @@ with tab_saeulen:
                                        showlegend=False,
                                        xaxis_tickfont_size=7)
                 fig_mini.update_layout(margin=dict(l=10, r=10, t=40, b=60))
-                st.plotly_chart(fig_mini, width='stretch', key=f"saeul_mini_{m}")
+                st.plotly_chart(fig_mini, use_container_width=True, key=f"saeul_mini_{m}")
             with col_b:
                 if i + 1 < len(metrics_list):
                     m2 = metrics_list[i + 1]
@@ -2792,7 +2809,7 @@ with tab_saeulen:
                                             showlegend=False,
                                             xaxis_tickfont_size=7)
                     fig_mini2.update_layout(margin=dict(l=10, r=10, t=40, b=60))
-                    st.plotly_chart(fig_mini2, width='stretch', key=f"saeul_mini_{m2}")
+                    st.plotly_chart(fig_mini2, use_container_width=True, key=f"saeul_mini_{m2}")
 
 # ══════════════════════════════════════════════
 # VERLETZUNGSRISIKO
@@ -2837,7 +2854,7 @@ with tab_flags:
             st.dataframe(
                 hm_df.style.background_gradient(cmap="RdYlGn", vmin=-20, vmax=20)
                            .format("{:.1f}", na_rep="—"),
-                width='stretch',
+                use_container_width=True,
                 height=500,
             )
 
@@ -2957,7 +2974,7 @@ with tab_squad:
 
     if squad_rows:
         squad_df = pd.DataFrame(squad_rows).set_index("Spielerin")
-        st.dataframe(squad_df, width='stretch')
+        st.dataframe(squad_df, use_container_width=True)
     else:
         st.info("Noch keine Spielerinnen. Lade eine Session um zu starten.")
     st.caption(f"**{len(players)} Spielerinnen** mit Messdaten · "
