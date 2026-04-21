@@ -701,6 +701,268 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
 
 
 # ─────────────────────────────────────────────
+# SPRINT PHASE BREAKDOWN — HELPERS
+# ─────────────────────────────────────────────
+
+# (label, cumulative_col, previous_col_or_None, phase_distance_m)
+SPRINT_PHASE_DEFS = [
+    ("0–5m",   "t5",  None,  5),
+    ("5–10m",  "t10", "t5",  5),
+    ("10–20m", "t20", "t10", 10),
+    ("20–30m", "t30", "t20", 10),
+]
+
+
+def sprint_phases(row) -> dict:
+    """Return {phase_label: split_time_s} for one data row. None if data missing."""
+    out = {}
+    for label, end_col, start_col, _ in SPRINT_PHASE_DEFS:
+        end_v = pd.to_numeric(row.get(end_col) if hasattr(row, "get") else row[end_col],
+                              errors="coerce")
+        if pd.isna(end_v):
+            out[label] = None
+            continue
+        start_v = 0.0
+        if start_col:
+            sv = pd.to_numeric(row.get(start_col) if hasattr(row, "get") else row[start_col],
+                               errors="coerce")
+            start_v = float(sv) if pd.notna(sv) else 0.0
+        out[label] = round(float(end_v) - start_v, 3)
+    return out
+
+
+def sprint_phase_speeds(phases: dict) -> dict:
+    """Return {phase_label: speed_m_s}. None where split time missing."""
+    dist = {"0–5m": 5, "5–10m": 5, "10–20m": 10, "20–30m": 10}
+    return {lbl: round(dist[lbl] / t, 3) if t and t > 0 else None
+            for lbl, t in phases.items()}
+
+
+def _team_phases_from_df(sess_df: pd.DataFrame) -> dict:
+    """Compute mean split time for each phase across a session DataFrame."""
+    out = {}
+    for label, end_col, start_col, _ in SPRINT_PHASE_DEFS:
+        splits = []
+        for _, r in sess_df.iterrows():
+            ev = pd.to_numeric(r.get(end_col), errors="coerce")
+            if pd.isna(ev):
+                continue
+            sv = pd.to_numeric(r.get(start_col), errors="coerce") if start_col else 0.0
+            splits.append(float(ev) - (float(sv) if pd.notna(sv) else 0.0))
+        out[label] = round(np.mean(splits), 3) if splits else None
+    return out
+
+
+def _best_sprinter(sess_df: pd.DataFrame):
+    """Return the row of the fastest player (lowest t20) in a session df."""
+    t20s = pd.to_numeric(sess_df["t20"], errors="coerce")
+    idx = t20s.idxmin() if not t20s.dropna().empty else None
+    return sess_df.loc[idx] if idx is not None else None
+
+
+def sprint_phase_insights(phases: dict, team_phases: dict = None) -> list:
+    """Return text insight strings from player phases vs team phases."""
+    insights = []
+    valid = {k: v for k, v in phases.items() if v is not None}
+    if not valid:
+        return ["Keine vollständigen Sprint-Daten vorhanden."]
+
+    speeds     = sprint_phase_speeds(phases)
+    team_speeds = sprint_phase_speeds(team_phases) if team_phases else {}
+    phase_names = {
+        "0–5m":   "Startbeschleunigung (0–5m)",
+        "5–10m":  "Antritt (5–10m)",
+        "10–20m": "Beschleunigungsphase (10–20m)",
+        "20–30m": "Maximalgeschwindigkeit (20–30m)",
+    }
+
+    for label, name in phase_names.items():
+        sp  = speeds.get(label)
+        tsp = team_speeds.get(label)
+        if sp is None or tsp is None or tsp == 0:
+            continue
+        pct = (sp - tsp) / tsp * 100
+        if pct > 5:
+            insights.append(f"✦ {name}: Elite-Niveau (+{pct:.1f}% über Team Ø)")
+        elif pct > 2:
+            insights.append(f"✦ {name}: Überdurchschnittlich (+{pct:.1f}% über Team Ø)")
+        elif pct < -5:
+            insights.append(f"■ {name}: Entwicklungsfeld ({pct:.1f}% unter Team Ø)")
+        elif pct < -2:
+            insights.append(f"■ {name}: Leicht unter Teamdurchschnitt ({pct:.1f}%)")
+
+    # Sprint profile shape: ratio top-speed / reaction speed
+    start_sp = speeds.get("0–5m")
+    end_sp   = speeds.get("20–30m")
+    if start_sp and end_sp and start_sp > 0:
+        ratio = end_sp / start_sp
+        if ratio > 1.40:
+            insights.append("✦ Starkes Sprint-Profil: explosiver Top-Speed-Aufbau über 30m")
+        elif ratio < 1.15:
+            insights.append("■ Flaches Sprint-Profil: Maximalgeschwindigkeit nicht voll ausgeschöpft")
+
+    if not insights:
+        insights.append("✦ Ausgeglichenes Sprint-Profil über alle Phasen")
+    return insights[:5]
+
+
+def sprint_curve_plotly(player_name: str, row, team_df: pd.DataFrame,
+                        best_row=None, title: str = "") -> go.Figure:
+    """Cumulative time curve (X=distance, Y=time, lower=faster)."""
+    distances = [0, 5, 10, 20, 30]
+    cols      = ["t5", "t10", "t20", "t30"]
+
+    def _times(r):
+        vals = [0.0]
+        for c in cols:
+            raw = r.get(c) if hasattr(r, "get") else r[c]
+            v   = pd.to_numeric(raw, errors="coerce")
+            vals.append(float(v) if pd.notna(v) else None)
+        return vals
+
+    fig = go.Figure()
+
+    # Team average curve
+    t_times = [0.0] + [
+        pd.to_numeric(team_df[c], errors="coerce").dropna().mean() for c in cols
+    ]
+    fig.add_trace(go.Scatter(
+        x=distances, y=t_times, name="Team Ø",
+        mode="lines+markers",
+        line=dict(color="#555555", width=2, dash="dash"),
+        marker=dict(size=6, color="#555555"),
+        hovertemplate="Team Ø · %{x}m: %{y:.3f}s<extra></extra>",
+    ))
+
+    # Best player curve
+    if best_row is not None:
+        b_times = _times(best_row)
+        b_name  = (best_row.get("name") if hasattr(best_row, "get") else best_row["name"]) or "Beste"
+        fig.add_trace(go.Scatter(
+            x=distances, y=b_times,
+            name=f"Beste: {b_name.split()[-1]}",
+            mode="lines+markers",
+            line=dict(color="#4ADE80", width=1.5, dash="dot"),
+            marker=dict(size=5, color="#4ADE80"),
+            hovertemplate=f"{b_name} · %{{x}}m: %{{y:.3f}}s<extra></extra>",
+        ))
+
+    # Player curve
+    p_times = _times(row)
+    fig.add_trace(go.Scatter(
+        x=distances, y=p_times,
+        name=player_name.split()[-1],
+        mode="lines+markers+text",
+        line=dict(color="#FDE000", width=2.5),
+        marker=dict(size=8, color="#FDE000"),
+        text=[None] + [f"{v:.2f}s" if v else "" for v in p_times[1:]],
+        textposition="top center",
+        textfont=dict(size=8, color="#FDE000"),
+        hovertemplate=f"{player_name} · %{{x}}m: %{{y:.3f}}s<extra></extra>",
+    ))
+
+    fig.update_layout(
+        **PLOTLY_LAYOUT,
+        title=dict(text=title or f"{player_name.split()[-1]} · Sprint Kurve",
+                   font_color="#FDE000", font_size=13),
+        xaxis=dict(title="Distanz (m)", tickvals=distances,
+                   tickfont=dict(color="#666"), titlefont=dict(color="#888"),
+                   gridcolor="#1a1a1a"),
+        yaxis=dict(title="Zeit (s)  ↓ = schneller",
+                   tickfont=dict(color="#555"), titlefont=dict(color="#888"),
+                   gridcolor="#1a1a1a"),
+        legend=dict(font_color="#666", bgcolor="rgba(0,0,0,0)"),
+        height=320,
+    )
+    return fig
+
+
+def sprint_phase_bar_plotly(player_name: str, phases: dict,
+                             team_phases: dict = None, best_phases: dict = None) -> go.Figure:
+    """Horizontal grouped bar of phase split times — lower is faster."""
+    labels = [lbl for lbl in phases if phases[lbl] is not None]
+    fig = go.Figure()
+
+    if team_phases:
+        fig.add_trace(go.Bar(
+            y=labels, x=[team_phases.get(l) for l in labels], name="Team Ø",
+            orientation="h", marker_color="#333333",
+            hovertemplate="Team Ø: %{x:.3f}s<extra></extra>",
+        ))
+    if best_phases:
+        fig.add_trace(go.Bar(
+            y=labels, x=[best_phases.get(l) for l in labels], name="Beste",
+            orientation="h", marker_color="#4ADE80", opacity=0.75,
+            hovertemplate="Beste: %{x:.3f}s<extra></extra>",
+        ))
+    fig.add_trace(go.Bar(
+        y=labels, x=[phases[l] for l in labels], name=player_name.split()[-1],
+        orientation="h", marker_color="#FDE000",
+        hovertemplate=f"{player_name}: %{{x:.3f}}s<extra></extra>",
+    ))
+
+    fig.update_layout(
+        **PLOTLY_LAYOUT,
+        barmode="group",
+        title=dict(text="Sprint Phasenzeiten  ↓ = schneller", font_color="#FDE000", font_size=13),
+        xaxis=dict(title="Zeit (s)", tickfont=dict(color="#555")),
+        yaxis=dict(tickfont=dict(color="#888")),
+        legend=dict(font_color="#666", bgcolor="rgba(0,0,0,0)"),
+        height=280,
+    )
+    return fig
+
+
+def sprint_phase_rankings_plotly(df: pd.DataFrame, session: str) -> dict:
+    """Return {phase_label: go.Figure} — team ranking per phase."""
+    sess_df = df[df["session"] == session].copy()
+    figs    = {}
+    for label, end_col, start_col, dist in SPRINT_PHASE_DEFS:
+        rows = []
+        for _, r in sess_df.iterrows():
+            ev = pd.to_numeric(r.get(end_col), errors="coerce")
+            if pd.isna(ev):
+                continue
+            sv = pd.to_numeric(r.get(start_col), errors="coerce") if start_col else 0.0
+            split = float(ev) - (float(sv) if pd.notna(sv) else 0.0)
+            if split > 0:
+                rows.append({"name": r["name"],
+                             "split": round(split, 3),
+                             "speed": round(dist / split, 2)})
+        if not rows:
+            continue
+        rdf = pd.DataFrame(rows).sort_values("split")  # ascending = fastest first
+        n   = len(rdf)
+        bar_colors = (["#22C55E"] + ["#FDE000"] * max(0, n - 2) +
+                      (["#EF4444"] if n > 1 else []))
+        team_avg = rdf["split"].mean()
+
+        fig = go.Figure(go.Bar(
+            x=[nm.split()[-1] for nm in rdf["name"]],
+            y=rdf["split"],
+            marker_color=bar_colors,
+            text=[f"{v:.3f}s" for v in rdf["split"]],
+            textposition="outside",
+            textfont=dict(size=9, color="#aaa"),
+            customdata=rdf["speed"],
+            hovertemplate="<b>%{x}</b><br>Zeit: %{y:.3f}s<br>Speed: %{customdata:.2f} m/s<extra></extra>",
+        ))
+        fig.add_hline(y=team_avg, line_color="#444", line_dash="dash", line_width=1.5,
+                      annotation_text=f"Ø {team_avg:.3f}s",
+                      annotation_font_color="#666", annotation_font_size=10,
+                      annotation_position="right")
+        fig.update_layout(
+            **PLOTLY_LAYOUT, height=320,
+            title=dict(text=f"Phase {label}  ·  Rangliste", font_color="#FDE000", font_size=13),
+            xaxis=dict(tickfont=dict(color="#777"), tickangle=-30),
+            yaxis=dict(title="Zeit (s)  ↓ = schneller",
+                       tickfont=dict(color="#555"), gridcolor="#1a1a1a"),
+        )
+        figs[label] = fig
+    return figs
+
+
+# ─────────────────────────────────────────────
 # PDF REPORT
 # ─────────────────────────────────────────────
 # ─────────────────────────────────────────────
@@ -1317,6 +1579,173 @@ def make_footer_canvas(session_label: str):
     return footer
 
 
+# ── SPRINT PHASE PDF CHARTS ────────────────────────────────────────────────────
+
+def chart_sprint_curve_pdf(player_name: str, row, team_df,
+                            best_row=None, figsize=(5.5, 3.2)) -> bytes:
+    """Cumulative sprint time curve for PDF embedding."""
+    distances = [0, 5, 10, 20, 30]
+    cols      = ["t5", "t10", "t20", "t30"]
+
+    def _times(r):
+        vals = [0.0]
+        for c in cols:
+            raw = r.get(c) if hasattr(r, "get") else r[c]
+            v   = pd.to_numeric(raw, errors="coerce")
+            vals.append(float(v) if pd.notna(v) else None)
+        return vals
+
+    p_times = _times(row)
+    if all(v is None for v in p_times[1:]):
+        return None
+
+    fig, ax = plt.subplots(figsize=figsize)
+    fig.patch.set_facecolor(MPL_BG)
+    ax.set_facecolor(MPL_BG2)
+
+    # Team average
+    t_times = [0.0] + [
+        pd.to_numeric(team_df[c], errors="coerce").dropna().mean() for c in cols
+    ]
+    t_times = [float(v) if pd.notna(v) else None for v in t_times]
+    ax.plot(distances, t_times, '--', lw=1.4, color="#666666", label="Team Ø", zorder=2)
+
+    # Best player
+    if best_row is not None:
+        b_times = _times(best_row)
+        b_name  = (best_row.get("name") if hasattr(best_row, "get") else best_row["name"]) or "Beste"
+        ax.plot(distances, b_times, '-.', lw=1.2, color="#4ADE80",
+                label=f"Beste: {b_name.split()[-1]}", zorder=2)
+
+    # Player
+    ax.plot(distances, p_times, 'o-', lw=2.2, color=MPL_Y, zorder=3, markersize=5,
+            label=player_name.split()[-1])
+    for d, t in zip(distances[1:], p_times[1:]):
+        if t is not None:
+            ax.annotate(f"{t:.2f}s", (d, t), textcoords="offset points",
+                        xytext=(0, 7), ha="center", fontsize=6.5, color=MPL_Y)
+
+    ax.set_xlabel("Distanz (m)", color=MPL_TXT, size=8)
+    ax.set_ylabel("Zeit (s)  ↓ = schneller", color=MPL_TXT, size=8)
+    ax.set_xticks(distances)
+    ax.tick_params(colors=MPL_TXT, labelsize=7)
+    ax.set_title(f"{player_name.split()[-1]} · Sprint Kurve", color=MPL_Y, size=9, fontweight="bold")
+    ax.legend(fontsize=7, framealpha=0, labelcolor="white", loc="upper left")
+    ax.grid(color=MPL_GRID, lw=0.5, alpha=0.6)
+    for sp in ax.spines.values():
+        sp.set_color("#333")
+    plt.tight_layout(pad=0.5)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=190, bbox_inches="tight",
+                facecolor=MPL_BG, edgecolor="none")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+def chart_sprint_phases_pdf(player_name: str, phases: dict,
+                             team_phases: dict = None, best_phases: dict = None,
+                             figsize=(5.5, 3.2)) -> bytes:
+    """Horizontal grouped bar of phase split times for PDF embedding."""
+    labels = [lbl for lbl in phases if phases[lbl] is not None]
+    if not labels:
+        return None
+
+    y = np.arange(len(labels))
+    n_groups = 1 + (1 if team_phases else 0) + (1 if best_phases else 0)
+    bar_h    = 0.22
+    offsets  = np.linspace(-(n_groups - 1) * bar_h / 2,
+                            (n_groups - 1) * bar_h / 2, n_groups)
+    gi = 0
+
+    fig, ax = plt.subplots(figsize=figsize)
+    fig.patch.set_facecolor(MPL_BG)
+    ax.set_facecolor(MPL_BG2)
+
+    if team_phases:
+        t_vals = [team_phases.get(l) or 0 for l in labels]
+        ax.barh(y + offsets[gi], t_vals, bar_h, color="#444444", label="Team Ø")
+        gi += 1
+    if best_phases:
+        b_vals = [best_phases.get(l) or 0 for l in labels]
+        ax.barh(y + offsets[gi], b_vals, bar_h, color="#4ADE80", alpha=0.75, label="Beste")
+        gi += 1
+
+    p_vals = [phases[l] for l in labels]
+    bars = ax.barh(y + offsets[gi], p_vals, bar_h, color=MPL_Y, label=player_name.split()[-1])
+    for bar, v in zip(bars, p_vals):
+        ax.text(v + 0.002, bar.get_y() + bar.get_height() / 2,
+                f"{v:.3f}s", va="center", ha="left", fontsize=6.5, color=MPL_Y)
+
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, color=MPL_TXT, size=8)
+    ax.set_xlabel("Zeit (s)  ↓ = schneller", color=MPL_TXT, size=8)
+    ax.set_title("Sprint Phasenzeiten", color=MPL_Y, size=9, fontweight="bold")
+    ax.tick_params(colors=MPL_TXT, labelsize=7)
+    ax.legend(fontsize=7, framealpha=0, labelcolor="white", loc="lower right")
+    ax.grid(axis="x", color=MPL_GRID, lw=0.5, alpha=0.6)
+    for sp in ax.spines.values():
+        sp.set_color("#333")
+    plt.tight_layout(pad=0.5)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=190, bbox_inches="tight",
+                facecolor=MPL_BG, edgecolor="none")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+def chart_sprint_phase_ranking_pdf(df: pd.DataFrame, session: str,
+                                    figsize=(7.2, 2.8)) -> bytes:
+    """4-panel horizontal bars — one per sprint phase — for team PDF."""
+    sess_df = df[df["session"] == session]
+    fig, axes = plt.subplots(1, 4, figsize=figsize, sharey=False)
+    fig.patch.set_facecolor(MPL_BG)
+
+    for ax, (label, end_col, start_col, dist) in zip(axes, SPRINT_PHASE_DEFS):
+        ax.set_facecolor(MPL_BG2)
+        rows = []
+        for _, r in sess_df.iterrows():
+            ev = pd.to_numeric(r.get(end_col), errors="coerce")
+            if pd.isna(ev):
+                continue
+            sv = pd.to_numeric(r.get(start_col), errors="coerce") if start_col else 0.0
+            split = float(ev) - (float(sv) if pd.notna(sv) else 0.0)
+            if split > 0:
+                rows.append((r["name"].split()[-1], round(split, 3)))
+        if not rows:
+            ax.axis("off")
+            continue
+        rows.sort(key=lambda x: x[1])  # fastest first
+        names  = [r[0] for r in rows]
+        splits = [r[1] for r in rows]
+        n = len(rows)
+        clrs = (["#22C55E"] + [MPL_DARK] * max(0, n - 2) +
+                (["#EF4444"] if n > 1 else []))
+        ax.barh(names, splits, color=clrs, height=0.65, edgecolor="none")
+        avg = np.mean(splits)
+        ax.axvline(avg, color=MPL_Y, lw=1, ls="--", alpha=0.8)
+        ax.set_title(label, color=MPL_Y, size=7.5, fontweight="bold")
+        ax.tick_params(colors=MPL_TXT, labelsize=6.5)
+        ax.set_xlabel("s", color=MPL_TXT, size=6.5)
+        ax.grid(axis="x", color=MPL_GRID, lw=0.4, alpha=0.5)
+        for sp in ax.spines.values():
+            sp.set_color("#333")
+
+    fig.suptitle(f"Sprint Phase Rankings · {session}", color=MPL_Y,
+                 size=9, fontweight="bold", y=1.02)
+    plt.tight_layout(pad=0.4)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=190, bbox_inches="tight",
+                facecolor=MPL_BG, edgecolor="none")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
 # ── TEAM PDF ───────────────────────────────────────────────────────────────────
 
 def generate_team_pdf(df: pd.DataFrame) -> bytes:
@@ -1507,6 +1936,19 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
             styled_table(t_rows, col_w_r, best_row=best_r, worst_row=worst_r),
             Spacer(1, 0.5 * cm),
         ]))
+
+    # ── SPRINT PHASE RANKINGS ──────────────────────────────────────────────
+    story.append(PageBreak())
+    rl_section(story, "Sprint Phase Rankings", S)
+    story.append(Paragraph(
+        "Rangliste je Sprintphase für die aktuelle Session. "
+        "Grün = schnellste Spielerin · Rot = langsamste · Linie = Team Ø.",
+        S["caption"]))
+    story.append(Spacer(1, 0.2 * cm))
+    sprint_ranking_bytes = chart_sprint_phase_ranking_pdf(df, last_sess)
+    if sprint_ranking_bytes:
+        story.append(img_flowable(sprint_ranking_bytes, 17))
+    story.append(Spacer(1, 0.3 * cm))
 
     # ── PAGE 4: INDIVIDUAL CARDS ────────────────────────────────────────────
     story.append(PageBreak())
@@ -1730,6 +2172,36 @@ def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
                 S["caption"]))
             story.append(Spacer(1, 0.2 * cm))
 
+    # ── SPRINT PHASE BREAKDOWN ───────────────────────────────────────────
+    sp_phases_p = sprint_phases(p_last_row)
+    if any(v is not None for v in sp_phases_p.values()):
+        rl_section(story, "Sprint Phase Breakdown", S)
+        sp_team_ph_p    = _team_phases_from_df(last_df)
+        sp_best_row_p   = _best_sprinter(last_df)
+        sp_best_ph_p    = sprint_phases(sp_best_row_p) if sp_best_row_p is not None else None
+        curve_bytes_p   = chart_sprint_curve_pdf(player, p_last_row, last_df, sp_best_row_p)
+        phases_bytes_p  = chart_sprint_phases_pdf(player, sp_phases_p, sp_team_ph_p, sp_best_ph_p)
+        if curve_bytes_p and phases_bytes_p:
+            sprint_side = Table(
+                [[img_flowable(curve_bytes_p, 8.5), img_flowable(phases_bytes_p, 8.5)]],
+                colWidths=[9 * cm, W_BODY - 9 * cm],
+            )
+            sprint_side.setStyle(TableStyle([
+                ("VALIGN",       (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING",  (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ]))
+            story.append(sprint_side)
+        elif curve_bytes_p:
+            story.append(img_flowable(curve_bytes_p, 16))
+        story.append(Paragraph(
+            "Links: kumulative Zeitkurve (gelb=Spielerin, grau=Team Ø, grün=Beste). "
+            "Rechts: Phasenzeiten im Vergleich.", S["caption"]))
+        story.append(Spacer(1, 0.15 * cm))
+        for ins in sprint_phase_insights(sp_phases_p, sp_team_ph_p):
+            story.append(Paragraph(ins, S["insight"]))
+        story.append(Spacer(1, 0.2 * cm))
+
     # ── DATA TABLE ─────────────────────────────────────────────────────────
     rl_section(story, "Messdaten · Vollständige Historie", S)
 
@@ -1881,9 +2353,10 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 # MAIN TABS
 # ─────────────────────────────────────────────
-tab_overview, tab_player, tab_compare, tab_ranking, tab_saeulen, tab_flags, tab_pdf, tab_squad = st.tabs([
+tab_overview, tab_player, tab_sprint, tab_compare, tab_ranking, tab_saeulen, tab_flags, tab_pdf, tab_squad = st.tabs([
     "📊 Überblick",
     "👤 Spielerin",
+    "🏃 Sprint Analyse",
     "⚡ Vergleich",
     "🏆 Rankings",
     "📊 Säulendiagramme",
@@ -2032,6 +2505,54 @@ with tab_player:
                                 width='stretch', key=f"player_comp_{selected_player}_{selected_session}")
 
             st.plotly_chart(trend_chart(df, selected_player), width='stretch', key=f"player_trend_{selected_player}")
+
+            # ── Sprint Phase Breakdown (inline in player tab) ───────────
+            if any(pd.notna(rec.get(c)) for c in ["t5", "t10", "t20", "t30"]):
+                st.divider()
+                st.markdown("#### 🏃 Sprint Phase Breakdown")
+                _sp_phases     = sprint_phases(rec)
+                _sp_sess_df    = df[df["session"] == selected_session]
+                _sp_team_ph    = _team_phases_from_df(_sp_sess_df)
+                _sp_best_row   = _best_sprinter(_sp_sess_df)
+                _sp_best_ph    = sprint_phases(_sp_best_row) if _sp_best_row is not None else None
+
+                # Phase KPI cards
+                _ph_cols = st.columns(4)
+                for _ci, (_lbl, _end, _start, _dist) in enumerate(SPRINT_PHASE_DEFS):
+                    with _ph_cols[_ci]:
+                        _pv = _sp_phases.get(_lbl)
+                        _tv = _sp_team_ph.get(_lbl)
+                        if _pv is not None:
+                            _spd = round(_dist / _pv, 2) if _pv > 0 else None
+                            st.metric(
+                                label=_lbl,
+                                value=f"{_pv:.3f}s",
+                                delta=f"{_pv - _tv:+.3f}s vs Team" if _tv else None,
+                                delta_color="inverse",
+                            )
+                            if _spd:
+                                st.caption(f"{_spd:.1f} m/s · {_spd*3.6:.1f} km/h")
+                        else:
+                            st.metric(label=_lbl, value="—")
+
+                _csp1, _csp2 = st.columns(2)
+                with _csp1:
+                    st.plotly_chart(
+                        sprint_curve_plotly(selected_player, rec, _sp_sess_df, _sp_best_row),
+                        width='stretch',
+                        key=f"ptab_curve_{selected_player}_{selected_session}",
+                    )
+                with _csp2:
+                    st.plotly_chart(
+                        sprint_phase_bar_plotly(selected_player, _sp_phases, _sp_team_ph, _sp_best_ph),
+                        width='stretch',
+                        key=f"ptab_phases_{selected_player}_{selected_session}",
+                    )
+                for _ins in sprint_phase_insights(_sp_phases, _sp_team_ph):
+                    if _ins.startswith("✦"):
+                        st.success(_ins)
+                    else:
+                        st.warning(_ins)
 
             c3, c4 = st.columns(2)
             with c3:
@@ -2500,3 +3021,93 @@ with tab_squad:
                 db.reset_and_reseed()
             st.success("✓ Datenbank zurückgesetzt und neu geseedet.")
             st.rerun()
+
+# ══════════════════════════════════════════════
+# SPRINT ANALYSE
+# ══════════════════════════════════════════════
+with tab_sprint:
+    st.markdown("### 🏃 Sprint Phase Breakdown")
+    st.caption("Analyse der Sprintphasen: 0–5m · 5–10m · 10–20m · 20–30m  |  Sprint-Kurve & Phasenzeiten vs Team und bester Spielerin")
+
+    col_sp1, col_sp2 = st.columns([2, 1])
+    with col_sp1:
+        sprint_player = st.selectbox("Spielerin", players, key="sprint_player_sel")
+    with col_sp2:
+        sprint_session = st.selectbox("Session", sessions, index=len(sessions) - 1, key="sprint_sess_sel")
+
+    st.divider()
+
+    sp_rec = df[(df["name"] == sprint_player) & (df["session"] == sprint_session)]
+    if sp_rec.empty:
+        st.warning(f"Keine Daten für {sprint_player} in {sprint_session}.")
+    else:
+        sp_row      = sp_rec.iloc[0]
+        sp_sess_df  = df[df["session"] == sprint_session]
+        sp_team_ph  = _team_phases_from_df(sp_sess_df)
+        sp_best_row = _best_sprinter(sp_sess_df)
+        sp_best_ph  = sprint_phases(sp_best_row) if sp_best_row is not None else None
+        sp_phases   = sprint_phases(sp_row)
+
+        # ── Phase KPI cards ─────────────────────────────────────────────
+        st.markdown("#### Phasenzeiten")
+        ph_cols = st.columns(4)
+        for ci, (lbl, end_col, start_col, dist) in enumerate(SPRINT_PHASE_DEFS):
+            with ph_cols[ci]:
+                pv = sp_phases.get(lbl)
+                tv = sp_team_ph.get(lbl)
+                if pv is not None:
+                    spd = round(dist / pv, 2) if pv > 0 else None
+                    st.metric(
+                        label=f"**{lbl}**",
+                        value=f"{pv:.3f}s",
+                        delta=f"{pv - tv:+.3f}s vs Team" if tv else None,
+                        delta_color="inverse",
+                    )
+                    if spd:
+                        st.caption(f"{spd:.1f} m/s  ·  {spd * 3.6:.1f} km/h")
+                else:
+                    st.metric(label=f"**{lbl}**", value="—")
+
+        st.divider()
+
+        # ── Charts ──────────────────────────────────────────────────────
+        c_curve, c_bar = st.columns(2)
+        with c_curve:
+            st.plotly_chart(
+                sprint_curve_plotly(sprint_player, sp_row, sp_sess_df, sp_best_row,
+                                    title=f"{sprint_player.split()[-1]} · Sprint Kurve"),
+                width="stretch",
+                key=f"sprint_curve_{sprint_player}_{sprint_session}",
+            )
+        with c_bar:
+            st.plotly_chart(
+                sprint_phase_bar_plotly(sprint_player, sp_phases, sp_team_ph, sp_best_ph),
+                width="stretch",
+                key=f"sprint_phasebar_{sprint_player}_{sprint_session}",
+            )
+
+        # ── Auto insights ────────────────────────────────────────────────
+        st.markdown("#### Auto-Insights")
+        for ins in sprint_phase_insights(sp_phases, sp_team_ph):
+            if ins.startswith("✦"):
+                st.success(ins)
+            else:
+                st.warning(ins)
+
+        st.divider()
+
+        # ── Team Rankings by Phase ───────────────────────────────────────
+        st.markdown("### Team Sprint Rankings")
+        st.caption(f"Session: **{sprint_session}**  ·  Grün = Schnellste · Rot = Langsamste · Linie = Team Ø")
+
+        phase_figs = sprint_phase_rankings_plotly(df, sprint_session)
+        if phase_figs:
+            rank_cols = st.columns(2)
+            for i, (phase_lbl, phase_fig) in enumerate(phase_figs.items()):
+                with rank_cols[i % 2]:
+                    st.plotly_chart(
+                        phase_fig, width="stretch",
+                        key=f"sprint_rank_{phase_lbl}_{sprint_session}",
+                    )
+        else:
+            st.info("Keine Sprint-Daten für diese Session.")
