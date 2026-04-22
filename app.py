@@ -391,16 +391,20 @@ def radar_chart(df: pd.DataFrame, names: list, sessions: list = None, title: str
                 continue
             rec = rec.iloc[0]
             # Use historical Z-scores (vs MW seit 2023) — matches Benedikt's Netzdiagramme
-            vals = [hist_z(m, rec.get(m)) for m in RADAR_METRICS]
-            if all(v is None for v in vals):
+            pairs = [(m, l, hist_z(m, rec.get(m)))
+                     for m, l in zip(RADAR_METRICS, RADAR_LABELS)]
+            pairs = [(m, l, z) for m, l, z in pairs if z is not None]
+            if not pairs:
                 continue
-            vals_clean = [v if v is not None else 100 for v in vals]
+            _, labels_used, vals_clean = zip(*pairs)
+            labels_used = list(labels_used)
+            vals_clean  = list(vals_clean)
             color = palette[ni % len(palette)] if len(names) > 1 else palette[si % len(palette)]
             label = f"{name} · {sess}" if len(names) > 1 else sess
             opacity = 1.0 if si == len(sessions) - 1 else 0.5
             fig.add_trace(go.Scatterpolar(
                 r=vals_clean + [vals_clean[0]],
-                theta=RADAR_LABELS + [RADAR_LABELS[0]],
+                theta=labels_used + [labels_used[0]],
                 fill="toself",
                 fillcolor=hex_rgba(color, 0.1),
                 line=dict(color=color, width=2.5 if opacity == 1.0 else 1.5),
@@ -492,16 +496,19 @@ def comparison_bar(df: pd.DataFrame, name: str, session: str) -> go.Figure:
     for m in RADAR_METRICS:
         # Use historical Z-scores for meaningful comparison
         pz = hist_z(m, rec.get(m))
-        if pz is not None:
-            # Team average Z for this session
-            team_metric_vals = pd.to_numeric(team[m], errors="coerce").dropna()
-            if len(team_metric_vals) > 0:
-                tz = np.mean([hist_z(m, v) for v in team_metric_vals if hist_z(m, v) is not None])
-            else:
-                tz = 100
-            labels.append(RAW_METRICS[m]["label"])
-            player_vals.append(pz)
-            team_vals.append(tz if tz is not None else 100)
+        if pz is None:
+            continue
+        # Team average Z for this session — skip metric if team has no data either
+        team_metric_vals = pd.to_numeric(team[m], errors="coerce").dropna()
+        if len(team_metric_vals) == 0:
+            continue
+        team_zs = [hist_z(m, v) for v in team_metric_vals if hist_z(m, v) is not None]
+        if not team_zs:
+            continue
+        tz = np.mean(team_zs)
+        labels.append(RAW_METRICS[m]["label"])
+        player_vals.append(pz)
+        team_vals.append(tz)
     fig = go.Figure()
     fig.add_trace(go.Bar(
         y=labels, x=team_vals, name="Team Ø",
@@ -720,6 +727,33 @@ SPRINT_PHASE_DEFS = [
     ("10–20m", "t20", "t10", 10),
     ("20–30m", "t30", "t20", 10),
 ]
+
+
+# ─────────────────────────────────────────────
+# DATA AVAILABILITY HELPERS
+# ─────────────────────────────────────────────
+
+def get_metric_coverage(df: pd.DataFrame, session: str) -> dict:
+    """Return {metric: fraction_with_data} for a given session (0.0–1.0)."""
+    sdf = df[df["session"] == session]
+    if sdf.empty:
+        return {m: 0.0 for m in RAW_METRICS}
+    n = len(sdf)
+    return {m: pd.to_numeric(sdf[m], errors="coerce").notna().sum() / n
+            for m in RAW_METRICS}
+
+
+def get_available_metrics(df: pd.DataFrame, session: str, min_coverage: float = 0.25) -> list:
+    """Return metrics with at least min_coverage fraction of values present in session."""
+    coverage = get_metric_coverage(df, session)
+    return [m for m in RAW_METRICS if coverage.get(m, 0) >= min_coverage]
+
+
+def weighted_overall_z(player_row, available_metrics: list):
+    """Mean Z-score across only the metrics that were tested. Returns None if no data."""
+    zs = [hist_z(m, player_row.get(m)) for m in available_metrics]
+    zs = [z for z in zs if z is not None]
+    return round(np.mean(zs), 1) if zs else None
 
 
 def sprint_phases(row) -> dict:
@@ -1134,16 +1168,20 @@ def style():
 
 def chart_radar(player_scores: dict, team_scores: dict,
                 title="", figsize=(4.8, 4.8)) -> bytes:
-    """8-axis individual-metric radar for PDF: player (yellow) vs team average (grey)."""
-    labels = PDF_RADAR_LABELS
+    """8-axis individual-metric radar for PDF: player (yellow) vs team average (grey).
+    Axes with no player or team data are excluded to avoid misleading polygons."""
+    # Only include axes where the player actually has a score
+    labels = [ax for ax in PDF_RADAR_LABELS if player_scores.get(ax) is not None]
+    if not labels:
+        labels = PDF_RADAR_LABELS  # fallback: show all axes at neutral
     N = len(labels)
     angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
     angles += angles[:1]
 
-    p_vals = [player_scores.get(ax, 100) or 100 for ax in labels] + \
-             [player_scores.get(labels[0], 100) or 100]
-    t_vals = [team_scores.get(ax, 100) or 100 for ax in labels] + \
-             [team_scores.get(labels[0], 100) or 100]
+    p_vals = [player_scores.get(ax) or 100 for ax in labels] + \
+             [player_scores.get(labels[0]) or 100]
+    t_vals = [team_scores.get(ax) or 100 for ax in labels] + \
+             [team_scores.get(labels[0]) or 100]
 
     fig, ax = plt.subplots(figsize=figsize, subplot_kw=dict(polar=True))
     fig.patch.set_facecolor(MPL_BG)
@@ -1509,13 +1547,15 @@ def auto_insights(df: pd.DataFrame, session: str, player: str = None) -> list:
         sdf = sdf[sdf["name"] == player]
     insights = []
 
-    METRICS_CHECKED = [
+    ALL_METRICS_CHECKED = [
         ("cmj",      "Sprungkraft (CMJ)",       True),
         ("dj_rsi",   "Reaktivkraft (RSI)",       True),
         ("t20",      "Sprint 20m",               False),
         ("agility",  "Agility",                  False),
         ("vo2max",   "Aerobe Kapazität (VO2max)", True),
     ]
+    avail = set(get_available_metrics(df, session))
+    METRICS_CHECKED = [(m, l, h) for m, l, h in ALL_METRICS_CHECKED if m in avail]
 
     if player:
         row = sdf.iloc[0] if not sdf.empty else None
@@ -1823,17 +1863,19 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
     # ── PAGE 2: TEAM RADAR + TEAM INSIGHTS ────────────────────────────────
     rl_section(story, "Squad Benchmark Summary", S)
 
-    # Build team average axis scores
+    # Build team average axis scores — only include axes with actual data
     team_axis = {}
     for ax, metrics in PDF_RADAR_AXES.items():
         z_vals = []
         for m in metrics:
             col = pd.to_numeric(last_df[m], errors="coerce").dropna()
             z_vals += [hist_z(m, v) for v in col if hist_z(m, v) is not None]
-        team_axis[ax] = round(np.mean(z_vals), 1) if z_vals else 100
+        if z_vals:
+            team_axis[ax] = round(np.mean(z_vals), 1)
+        # axes with no data are excluded from the dict → chart_radar will filter them out
 
-    # Elite benchmark = 108 across all axes (top 20%)
-    elite_axis = {ax: 108 for ax in PDF_RADAR_LABELS}
+    # Elite benchmark = 108 for axes that have data
+    elite_axis = {ax: 108 for ax in team_axis}
 
     radar_bytes = chart_radar(team_axis, elite_axis,
                               title="Team Ø vs Elite-Referenz (Z=108)")
@@ -1986,14 +2028,15 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
         p_axis = player_axis_scores(p_last_row)
         t_axis = team_axis
 
-        # Score cards
-        overall_z = np.mean([v for v in p_axis.values() if v is not None] or [100])
+        # Score cards — only include axes/metrics that were actually tested
+        avail_p2 = set(get_available_metrics(df, last_p_sess))
+        overall_z = weighted_overall_z(p_last_row, list(avail_p2)) or \
+                    np.mean([v for v in p_axis.values() if v is not None] or [100])
         badge, bc  = z_to_badge(overall_z)
         cmj_v  = p_last_row.get("cmj")
         t20_v  = p_last_row.get("t20")
         vo2_v  = p_last_row.get("vo2max")
-
-        rsi_v = p_last_row.get("dj_rsi")
+        rsi_v  = p_last_row.get("dj_rsi")
         p_cards = [
             ("OVERALL",    f"Z = {overall_z:.0f}", badge, bc),
             ("CMJ",        fmt(cmj_v, 1) + " cm" if cmj_v else "—",
@@ -2002,9 +2045,10 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
              *z_to_badge(hist_z("t20", t20_v))),
             ("VO2MAX",     fmt(vo2_v, 1) if vo2_v else "—",
              *z_to_badge(hist_z("vo2max", vo2_v))),
-            ("DJ RSI",     fmt(rsi_v, 2) if rsi_v else "—",
-             *z_to_badge(hist_z("dj_rsi", rsi_v))),
         ]
+        if "dj_rsi" in avail_p2:
+            p_cards.append(("DJ RSI", fmt(rsi_v, 2) if rsi_v else "—",
+                             *z_to_badge(hist_z("dj_rsi", rsi_v))))
 
         radar_bytes = chart_radar(p_axis, t_axis,
                                   title=f"{player} vs Team Ø")
@@ -2103,7 +2147,7 @@ def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
     p_last_row  = p_df[p_df["session"] == last_p_sess].iloc[0]
     last_df     = df[df["session"] == last_sess]
 
-    # Build comparison scores
+    # Build comparison scores — only axes with real data
     p_axis = player_axis_scores(p_last_row)
     team_axis = {}
     for ax, metrics in PDF_RADAR_AXES.items():
@@ -2111,9 +2155,12 @@ def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
         for m in metrics:
             col = pd.to_numeric(last_df[m], errors="coerce").dropna()
             z_vals += [hist_z(m, v) for v in col if hist_z(m, v) is not None]
-        team_axis[ax] = round(np.mean(z_vals), 1) if z_vals else 100
+        if z_vals:
+            team_axis[ax] = round(np.mean(z_vals), 1)
 
-    overall_z = np.mean([v for v in p_axis.values() if v is not None] or [100])
+    avail_metrics = get_available_metrics(df, last_p_sess)
+    overall_z = weighted_overall_z(p_last_row, avail_metrics) or \
+                np.mean([v for v in p_axis.values() if v is not None] or [100])
     badge, bc  = z_to_badge(overall_z)
 
     doc = SimpleDocTemplate(
@@ -2135,18 +2182,23 @@ def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
     t20_v = p_last_row.get("t20")
     vo2_v = p_last_row.get("vo2max")
     rsi_v = p_last_row.get("dj_rsi")
+    avail_p = set(get_available_metrics(df, last_p_sess))
+
+    overall_z_val = weighted_overall_z(p_last_row, list(avail_p)) or overall_z
+    badge, bc  = z_to_badge(overall_z_val)
 
     cards = [
-        ("OVERALL SCORE", f"Z = {overall_z:.0f}", badge, bc),
+        ("OVERALL SCORE", f"Z = {overall_z_val:.0f}", badge, bc),
         ("CMJ HEIGHT",   fmt(cmj_v,1)+" cm" if cmj_v else "—",
          *z_to_badge(hist_z("cmj", cmj_v))),
         ("SPRINT 20m",   fmt(t20_v,2)+" s" if t20_v else "—",
          *z_to_badge(hist_z("t20", t20_v))),
         ("VO2MAX",       fmt(vo2_v,1) if vo2_v else "—",
          *z_to_badge(hist_z("vo2max", vo2_v))),
-        ("DJ RSI",       fmt(rsi_v,2) if rsi_v else "—",
-         *z_to_badge(hist_z("dj_rsi", rsi_v))),
     ]
+    if "dj_rsi" in avail_p:
+        cards.append(("DJ RSI", fmt(rsi_v,2) if rsi_v else "—",
+                       *z_to_badge(hist_z("dj_rsi", rsi_v))))
     story.append(score_card_table(cards))
     story.append(Spacer(1, 0.3 * cm))
 
@@ -2411,6 +2463,24 @@ with tab_overview:
                 delta_color="inverse" if label == "Ø Sprint t20" else "normal",
             )
 
+    # ── Session availability summary ─────────────────────────────────────────
+    coverage = get_metric_coverage(df, last_sess)
+    AVAIL_GROUPS = [
+        ("Jump",    ["cmj", "dj_rsi"]),
+        ("Sprint",  ["t5", "t10", "t20", "t30"]),
+        ("Agility", ["agility", "dribbling"]),
+        ("Fitness", ["vo2max"]),
+    ]
+    avail_cols = st.columns(len(AVAIL_GROUPS))
+    for ci, (grp, mets) in enumerate(AVAIL_GROUPS):
+        with avail_cols[ci]:
+            lines = []
+            for m in mets:
+                pct = int(coverage.get(m, 0) * 100)
+                icon = "✓" if pct >= 25 else "✕"
+                lines.append(f"{icon} {RAW_METRICS[m]['label']} ({pct}%)")
+            st.markdown(f"**{grp}**  \n" + "  \n".join(lines))
+
     st.divider()
     col1, col2 = st.columns(2)
     with col1:
@@ -2510,6 +2580,15 @@ with tab_player:
                     arch = cl.iloc[0]["archetype"]
                     color = cl.iloc[0]["color"]
                     st.markdown(f'<span style="background:{color}22;color:{color};border:1px solid {color}44;padding:3px 12px;border-radius:12px;font-size:12px">{arch}</span>', unsafe_allow_html=True)
+
+            # ── Per-session test availability for this player ────────────────
+            p_coverage = get_metric_coverage(df, selected_session)
+            avail_icons = []
+            for m in RAW_METRICS:
+                pct = int(p_coverage.get(m, 0) * 100)
+                icon = "✓" if pct >= 25 else "✕"
+                avail_icons.append(f"**{RAW_METRICS[m]['label']}** {icon}")
+            st.caption("Tests in dieser Session:  " + "  ·  ".join(avail_icons))
 
             st.divider()
             c1, c2 = st.columns(2)
