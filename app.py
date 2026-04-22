@@ -13,10 +13,7 @@ from plotly.subplots import make_subplots
 from scipy import stats
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
-from sklearn.preprocessing import MinMaxScaler
 import io
-import os
-from pathlib import Path
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
@@ -548,9 +545,9 @@ def ranked_bar_chart(df: pd.DataFrame, metric: str, sessions_to_show: list = Non
 
     last_sess = sessions_to_show[-1]
 
-    # Build player rows — only players who have data in at least one shown session
+    # Build player rows — only players who have data for this metric in at least one shown session
     player_data = []
-    for name in sorted(df[df["cmj"].notna()]["name"].unique()):
+    for name in sorted(df["name"].unique()):
         row = {"name": name}
         has_any = False
         for sess in sessions_to_show:
@@ -563,7 +560,7 @@ def ranked_bar_chart(df: pd.DataFrame, metric: str, sessions_to_show: list = Non
             player_data.append(row)
 
     if not player_data:
-        return go.Figure()
+        return None
 
     pdf = pd.DataFrame(player_data)
 
@@ -1028,8 +1025,6 @@ Charts rendered via Matplotlib → PNG → embedded in ReportLab PDF.
 
 import io
 import math
-import tempfile
-import os
 import numpy as np
 import pandas as pd
 from datetime import datetime
@@ -1038,17 +1033,16 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.patches import FancyBboxPatch
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
-from reportlab.lib.units import cm, mm
+from reportlab.lib.units import cm
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
     HRFlowable, PageBreak, Image, KeepTogether
 )
 from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.lib.enums import TA_CENTER
 from reportlab.pdfgen import canvas as rl_canvas
 
 
@@ -2463,28 +2457,70 @@ with tab_overview:
                 delta_color="inverse" if label == "Ø Sprint t20" else "normal",
             )
 
-    # ── Session availability summary ─────────────────────────────────────────
+    # ── Session Datenqualität — premium coverage cards ───────────────────────
     coverage = get_metric_coverage(df, last_sess)
+    n_players_sess = len(df[df["session"] == last_sess])
     AVAIL_GROUPS = [
-        ("Jump",    ["cmj", "dj_rsi"]),
-        ("Sprint",  ["t5", "t10", "t20", "t30"]),
-        ("Agility", ["agility", "dribbling"]),
-        ("Fitness", ["vo2max"]),
+        ("Jump Tests",    ["cmj", "dj_rsi"]),
+        ("Sprint Tests",  ["t5", "t10", "t20", "t30"]),
+        ("Skills",        ["agility", "dribbling"]),
+        ("Fitness",       ["vo2max"]),
     ]
+    st.markdown(
+        "<div style='font-size:11px;color:#555;text-transform:uppercase;letter-spacing:1.5px;"
+        "margin-bottom:8px'>Session Datenqualität</div>",
+        unsafe_allow_html=True,
+    )
     avail_cols = st.columns(len(AVAIL_GROUPS))
     for ci, (grp, mets) in enumerate(AVAIL_GROUPS):
         with avail_cols[ci]:
-            lines = []
+            # Card container
+            rows_html = ""
             for m in mets:
                 pct = int(coverage.get(m, 0) * 100)
-                icon = "✓" if pct >= 25 else "✕"
-                lines.append(f"{icon} {RAW_METRICS[m]['label']} ({pct}%)")
-            st.markdown(f"**{grp}**  \n" + "  \n".join(lines))
+                if pct == 0:
+                    bar_color = "#333"
+                    pct_color = "#555"
+                    label_suffix = "Keine Daten"
+                elif pct < 50:
+                    bar_color = "#B45309"
+                    pct_color = "#F59E0B"
+                    label_suffix = f"{pct}%"
+                else:
+                    bar_color = "#065F46"
+                    pct_color = "#10B981"
+                    label_suffix = f"{pct}%"
+                # Special: detect goalkeeper-only for dj_rsi
+                if m == "dj_rsi" and 0 < pct < 25:
+                    label_suffix = f"GK only ({pct}%)"
+                bar_w = max(pct, 2) if pct > 0 else 0
+                rows_html += (
+                    f"<div style='margin:4px 0'>"
+                    f"<div style='display:flex;justify-content:space-between;"
+                    f"font-size:11px;margin-bottom:2px'>"
+                    f"<span style='color:#999'>{RAW_METRICS[m]['label']}</span>"
+                    f"<span style='color:{pct_color};font-weight:600'>{label_suffix}</span>"
+                    f"</div>"
+                    f"<div style='background:#1a1a1a;border-radius:3px;height:5px'>"
+                    f"<div style='width:{bar_w}%;background:{bar_color};"
+                    f"border-radius:3px;height:5px'></div>"
+                    f"</div>"
+                    f"</div>"
+                )
+            st.markdown(
+                f"<div style='background:#111;border:1px solid #222;border-radius:8px;"
+                f"padding:10px 12px'>"
+                f"<div style='font-size:10px;text-transform:uppercase;letter-spacing:1px;"
+                f"color:#FDE000;font-weight:700;margin-bottom:6px'>{grp}</div>"
+                f"{rows_html}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
     st.divider()
     col1, col2 = st.columns(2)
     with col1:
-        st.plotly_chart(team_radar_chart(df), use_container_width=True, key="team_radar")
+        st.plotly_chart(team_radar_chart(df), width="stretch", key="team_radar")
     with col2:
         st.markdown("#### Meistverbesserte")
         if prev_sess:
@@ -2540,7 +2576,7 @@ with tab_overview:
                                         xaxis=dict(tickfont=dict(color="#666")),
                                         yaxis=dict(tickfont=dict(color="#555")))
                 fig_trend.add_hline(y=0, line_color="#333")
-                st.plotly_chart(fig_trend, use_container_width=True, key="team_trend")
+                st.plotly_chart(fig_trend, width="stretch", key="team_trend")
         else:
             st.info("Zwei Sessions benötigt.")
 
@@ -2595,12 +2631,12 @@ with tab_player:
             with c1:
                 player_sessions = sorted(df[df["name"] == selected_player]["session"].unique())
                 st.plotly_chart(radar_chart(df, [selected_player], player_sessions,
-                                           title=f"{selected_player} · Radar"), use_container_width=True, key=f"player_radar_{selected_player}")
+                                           title=f"{selected_player} · Radar"), width="stretch", key=f"player_radar_{selected_player}")
             with c2:
                 st.plotly_chart(comparison_bar(df, selected_player, selected_session),
-                                use_container_width=True, key=f"player_comp_{selected_player}_{selected_session}")
+                                width="stretch", key=f"player_comp_{selected_player}_{selected_session}")
 
-            st.plotly_chart(trend_chart(df, selected_player), use_container_width=True, key=f"player_trend_{selected_player}")
+            st.plotly_chart(trend_chart(df, selected_player), width="stretch", key=f"player_trend_{selected_player}")
 
             # ── Sprint Phase Breakdown (inline in player tab) ───────────
             if any(pd.notna(rec.get(c)) for c in ["t5", "t10", "t20", "t30"]):
@@ -2635,13 +2671,13 @@ with tab_player:
                 with _csp1:
                     st.plotly_chart(
                         sprint_curve_plotly(selected_player, rec, _sp_sess_df, _sp_best_row),
-                        use_container_width=True,
+                        width="stretch",
                         key=f"ptab_curve_{selected_player}_{selected_session}",
                     )
                 with _csp2:
                     st.plotly_chart(
                         sprint_phase_bar_plotly(selected_player, _sp_phases, _sp_team_ph, _sp_best_ph),
-                        use_container_width=True,
+                        width="stretch",
                         key=f"ptab_phases_{selected_player}_{selected_session}",
                     )
                 for _ins in sprint_phase_insights(_sp_phases, _sp_team_ph):
@@ -2726,7 +2762,7 @@ with tab_compare:
         c1, c2 = st.columns(2)
         with c1:
             st.plotly_chart(radar_chart(df, selected_players, [cmp_session],
-                                       title="Radar Vergleich"), use_container_width=True, key="cmp_radar")
+                                       title="Radar Vergleich"), width="stretch", key="cmp_radar")
         with c2:
             cmp_metric = st.selectbox("Metrik", list(RAW_METRICS.keys()),
                                       format_func=lambda x: RAW_METRICS[x]["label"])
@@ -2749,7 +2785,9 @@ with tab_compare:
                                       showlegend=False,
                                       xaxis=dict(tickfont=dict(color="#666")),
                                       yaxis=dict(tickfont=dict(color="#555")))
-                st.plotly_chart(fig_cmp, use_container_width=True, key=f"cmp_bar_{cmp_metric}")
+                st.plotly_chart(fig_cmp, width="stretch", key=f"cmp_bar_{cmp_metric}")
+            else:
+                st.info(f"Keine {RAW_METRICS[cmp_metric]['label']}-Daten für die gewählten Spielerinnen.")
 
         st.markdown("#### Detaillierter Vergleich")
         rows = []
@@ -2792,7 +2830,7 @@ with tab_compare:
                                  xaxis=dict(tickfont=dict(color="#666")),
                                  yaxis=dict(tickfont=dict(color="#555")),
                                  legend=dict(font_color="#666"))
-            st.plotly_chart(fig_tl, use_container_width=True, key=f"cmp_trend_{tl_metric}")
+            st.plotly_chart(fig_tl, width="stretch", key=f"cmp_trend_{tl_metric}")
 
 # ══════════════════════════════════════════════
 # RANKINGS
@@ -2827,9 +2865,12 @@ with tab_ranking:
                 deltas.append(None)
         rk_df["Δ vs prev"] = deltas
 
-    display_cols = ["#", "name", "Metrik"] + (["Δ vs prev"] if prev_sess else [])
-    rk_display = rk_df[display_cols].rename(columns={"name": "Spielerin"}).set_index("#")
-    st.dataframe(rk_display, use_container_width=True, height=600)
+    if rk_df.empty:
+        st.info(f"Keine {info['label']}-Daten in Session **{rk_session}**.")
+    else:
+        display_cols = ["#", "name", "Metrik"] + (["Δ vs prev"] if prev_sess else [])
+        rk_display = rk_df[display_cols].rename(columns={"name": "Spielerin"}).set_index("#")
+        st.dataframe(rk_display, use_container_width=True, height=600)
 
 
 # ══════════════════════════════════════════════
@@ -2858,11 +2899,11 @@ with tab_saeulen:
     if not saeulen_sessions:
         st.info("Mindestens eine Session auswählen.")
     else:
-        st.plotly_chart(
-            ranked_bar_chart(df, saeulen_metric, saeulen_sessions),
-            use_container_width=True,
-            key=f"saeul_main_{saeulen_metric}",
-        )
+        _main_fig = ranked_bar_chart(df, saeulen_metric, saeulen_sessions)
+        if _main_fig is None:
+            st.info(f"Keine {RAW_METRICS[saeulen_metric]['label']}-Daten in den gewählten Sessions.")
+        else:
+            st.plotly_chart(_main_fig, width="stretch", key=f"saeul_main_{saeulen_metric}")
 
         st.divider()
         st.markdown("#### Alle Metriken auf einen Blick")
@@ -2875,20 +2916,24 @@ with tab_saeulen:
             with col_a:
                 m = metrics_list[i]
                 fig_mini = ranked_bar_chart(df, m, saeulen_sessions)
-                fig_mini.update_layout(height=320, title_font_size=12,
-                                       showlegend=False,
-                                       xaxis_tickfont_size=7)
-                fig_mini.update_layout(margin=dict(l=10, r=10, t=40, b=60))
-                st.plotly_chart(fig_mini, use_container_width=True, key=f"saeul_mini_{m}")
+                if fig_mini is None:
+                    st.caption(f"_{RAW_METRICS[m]['label']}: keine Daten_")
+                else:
+                    fig_mini.update_layout(height=320, title_font_size=12,
+                                           showlegend=False, xaxis_tickfont_size=7,
+                                           margin=dict(l=10, r=10, t=40, b=60))
+                    st.plotly_chart(fig_mini, width="stretch", key=f"saeul_mini_{m}")
             with col_b:
                 if i + 1 < len(metrics_list):
                     m2 = metrics_list[i + 1]
                     fig_mini2 = ranked_bar_chart(df, m2, saeulen_sessions)
-                    fig_mini2.update_layout(height=320, title_font_size=12,
-                                            showlegend=False,
-                                            xaxis_tickfont_size=7)
-                    fig_mini2.update_layout(margin=dict(l=10, r=10, t=40, b=60))
-                    st.plotly_chart(fig_mini2, use_container_width=True, key=f"saeul_mini_{m2}")
+                    if fig_mini2 is None:
+                        st.caption(f"_{RAW_METRICS[m2]['label']}: keine Daten_")
+                    else:
+                        fig_mini2.update_layout(height=320, title_font_size=12,
+                                                showlegend=False, xaxis_tickfont_size=7,
+                                                margin=dict(l=10, r=10, t=40, b=60))
+                        st.plotly_chart(fig_mini2, width="stretch", key=f"saeul_mini_{m2}")
 
 # ══════════════════════════════════════════════
 # VERLETZUNGSRISIKO
