@@ -14,6 +14,7 @@ from scipy import stats
 from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 import io
+import re
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
@@ -117,8 +118,9 @@ def team_radar_z(df: pd.DataFrame, metric: str, sessions: list) -> list:
     sd   = ALLTIME_SD.get(metric)
     result = []
     for s in sessions:
-        sess_df = df[(df["session"] == s) & df["cmj"].notna()]
-        v = sess_df[metric].mean() if metric in sess_df.columns else None
+        # Filter to players who participated in this session and have this metric
+        sess_df = df[(df["session"] == s) & df[metric].notna()]
+        v = pd.to_numeric(sess_df[metric], errors="coerce").mean() if not sess_df.empty else None
         if v is None or pd.isna(v) or mean is None or sd is None or sd == 0:
             result.append(100.0)
         else:
@@ -151,29 +153,160 @@ def compute_z_scores(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _cell(raw: pd.DataFrame, ri: int, ci: int) -> str:
+    """Return lowercase stripped cell string, or '' for NaN/out-of-bounds."""
+    try:
+        v = raw.iloc[ri, ci]
+        s = str(v or "").lower().strip()
+        return "" if s in ("nan", "none", "#div/0!", "0.0", "0") else s
+    except Exception:
+        return ""
+
+
+def _to_float(raw_val) -> float | None:
+    """Convert a raw cell value to float, returning None for errors/placeholders."""
+    s = str(raw_val).strip().replace(",", ".")
+    if s.lower() in ("nan", "none", "#div/0!", "", "0.0"):
+        return None
+    try:
+        v = float(s)
+        return None if v == 0.0 else v
+    except (ValueError, TypeError):
+        return None
+
+
 def parse_excel(file, session_label: str) -> pd.DataFrame:
+    """
+    Parse BVB Leistungsdiagnostik Excel (multi-row header).
+
+    Header layout (2 rows):
+      Row A: Section group labels  — "CMJ Sprunghöhe DVJ", "Sprint", "Agility Test",
+                                      "Dribbling Test", "Yo-Yo …"
+      Row B: Individual sub-columns — "best", "RSI", "t5(1)", …, "t1", "t1","t2","best", …
+
+    Strategy: two-pass scan.
+      Pass 1 — Collect section anchors (col positions where group labels appear)
+               and any directly named metric columns.
+      Pass 2 — For agility/dribbling not yet found, walk right from the section
+               anchor to find the best/t1 sub-column.
+    """
     xl = pd.ExcelFile(file)
+    months = ["jan","feb","mär","mar","apr","mai","jun","jul","aug","sep","okt","nov","dez"]
     sheet = next(
-        (s for s in xl.sheet_names if any(k in s.lower() for k in ["mär","mar","jan","sep","jul"])),
-        xl.sheet_names[0]
+        (s for s in xl.sheet_names if any(k in s.lower() for k in months)),
+        xl.sheet_names[0],
     )
     raw = pd.read_excel(file, sheet_name=sheet, header=None)
-    name_col, col_map = -1, {}
-    for ri in range(min(5, len(raw))):
-        for ci, cell in enumerate(raw.iloc[ri]):
-            s = str(cell or "").lower().strip()
-            if any(k in s for k in ["spieler", "name"]):          name_col = ci
-            if "cmj" in s and any(k in s for k in ["best","höhe","jump"]): col_map["cmj"] = ci
-            if "rsi" in s:                                         col_map["dj_rsi"] = ci
-            if s == "t5" or s.startswith("t5 ") or s.startswith("t5("):   col_map["t5"] = ci
-            if s == "t10" or s.startswith("t10 "):                col_map["t10"] = ci
-            if s == "t20" or s.startswith("t20"):                 col_map["t20"] = ci
-            if s == "t30" or s.startswith("t30"):                 col_map["t30"] = ci
-            if ("agility" in s or "illinois" in s) and any(k in s for k in ["best","t1"]): col_map["agility"] = ci
-            if "dribbling" in s and any(k in s for k in ["best","t1"]): col_map["dribbling"] = ci
-            if "vo2" in s:                                         col_map["vo2max"] = ci
+
+    n_cols = len(raw.columns)
+    n_header = min(6, len(raw))
+
+    name_col = -1
+    col_map: dict[str, int] = {}
+    section_anchors: dict[str, int] = {}  # section → leftmost col of its header cell
+
+    # ── PASS 1: scan all header rows ──────────────────────────────────────────
+    for ri in range(n_header):
+        for ci in range(n_cols):
+            s = _cell(raw, ri, ci)
+            if not s:
+                continue
+
+            # Player name
+            if any(k in s for k in ("spieler", "nachname", "name")):
+                name_col = ci
+
+            # Section group anchors (these are wide/merged label cells)
+            if "agility" in s or "illinois" in s:
+                section_anchors.setdefault("agility", ci)
+            if "dribbling" in s or "dribble" in s:
+                section_anchors.setdefault("dribbling", ci)
+
+            # CMJ — look for "best" or "sprunghöhe" qualifier to avoid false matches
+            if "cmj" in s and any(k in s for k in ("best","höhe","jump","sprunghöhe")):
+                col_map["cmj"] = ci
+            # CMJ standalone — take the "best" column in the cmj section
+            if s in ("cmj",) and "cmj" not in section_anchors:
+                section_anchors["cmj"] = ci
+
+            # DJ RSI
+            if "rsi" in s:
+                col_map["dj_rsi"] = ci
+
+            # Sprint — accept t5, t5(1), t5(2), t5 (1) … take FIRST occurrence only
+            if re.match(r'^t5[\s\(\[]', s) or s == "t5":
+                col_map.setdefault("t5", ci)
+            if re.match(r'^t10[\s\(\[]', s) or s == "t10":
+                col_map.setdefault("t10", ci)
+            if re.match(r'^t20[\s\(\[]', s) or s == "t20":
+                col_map.setdefault("t20", ci)
+            if re.match(r'^t30[\s\(\[]', s) or s == "t30":
+                col_map.setdefault("t30", ci)
+
+            # VO2max
+            if "vo2" in s:
+                col_map["vo2max"] = ci
+
+            # Agility/Dribbling: direct detection when label is combined in one cell
+            if ("agility" in s or "illinois" in s) and any(k in s for k in ("best","t1","t2","time","zeit")):
+                col_map["agility"] = ci
+            if ("dribbling" in s or "dribble" in s) and any(k in s for k in ("best","t1","t2","time","zeit")):
+                col_map["dribbling"] = ci
+            # Exact standalone labels
+            if s in ("agility", "illinois"):
+                col_map.setdefault("agility", ci)
+            if s in ("dribbling", "dribble"):
+                col_map.setdefault("dribbling", ci)
+
+    # ── PASS 2: section-context lookup for agility / dribbling ────────────────
+    def _find_sub_col(anchor_ci: int, want_best_first: bool = True) -> int | None:
+        """
+        Starting at anchor_ci, scan right across all header rows.
+        Returns col index of 'best' (preferred) or first 't1'/'t2' found.
+        """
+        best_ci = t1_ci = None
+        for ri in range(n_header):
+            for ci in range(anchor_ci, min(anchor_ci + 10, n_cols)):
+                s = _cell(raw, ri, ci)
+                if s == "best" and best_ci is None:
+                    best_ci = ci
+                if s in ("t1", "t2", "time", "zeit") and t1_ci is None:
+                    t1_ci = ci
+        if want_best_first:
+            return best_ci if best_ci is not None else t1_ci
+        return t1_ci if t1_ci is not None else best_ci
+
+    if "agility" not in col_map and "agility" in section_anchors:
+        # Agility usually has only one value (t1) — no "best" column
+        ci = _find_sub_col(section_anchors["agility"], want_best_first=False)
+        if ci is not None:
+            col_map["agility"] = ci
+
+    if "dribbling" not in col_map and "dribbling" in section_anchors:
+        # Dribbling has t1, t2, best — prefer best
+        ci = _find_sub_col(section_anchors["dribbling"], want_best_first=True)
+        if ci is not None:
+            col_map["dribbling"] = ci
+
+    # ── CMJ best-column fallback ───────────────────────────────────────────────
+    if "cmj" not in col_map and "cmj" in section_anchors:
+        ci = _find_sub_col(section_anchors["cmj"], want_best_first=True)
+        if ci is not None:
+            col_map["cmj"] = ci
+
     if name_col == -1:
         return pd.DataFrame()
+
+    # ── Debug log (visible in sidebar when columns are found) ─────────────────
+    _parse_debug = {
+        "name_col": name_col,
+        "agility": col_map.get("agility", "NOT FOUND"),
+        "dribbling": col_map.get("dribbling", "NOT FOUND"),
+        **{k: col_map.get(k, "—") for k in ("cmj","dj_rsi","t5","t10","t20","t30","vo2max")},
+    }
+    st.session_state["_last_parse_debug"] = _parse_debug
+
+    # ── Build records ─────────────────────────────────────────────────────────
     records = []
     for _, row in raw.iloc[2:].iterrows():
         name = row.iloc[name_col]
@@ -181,10 +314,7 @@ def parse_excel(file, session_label: str) -> pd.DataFrame:
             continue
         rec = {"name": name.strip(), "session": session_label}
         for key, ci in col_map.items():
-            try:
-                rec[key] = float(str(row.iloc[ci]).replace(",", "."))
-            except (ValueError, TypeError):
-                rec[key] = None
+            rec[key] = _to_float(row.iloc[ci])
         for key in RAW_METRICS:
             if key not in rec:
                 rec[key] = None
@@ -206,7 +336,8 @@ def compute_injury_flags(df: pd.DataFrame, threshold: float = 8.0):
         return []
     last, prev = sessions[-1], sessions[-2]
     flags = []
-    for name in sorted(df[df["cmj"].notna()]["name"].unique()):
+    _any = df[list(RAW_METRICS.keys())].notna().any(axis=1)
+    for name in sorted(df[_any]["name"].unique()):
         j = df[(df["name"] == name) & (df["session"] == prev)]
         m = df[(df["name"] == name) & (df["session"] == last)]
         if j.empty or m.empty:
@@ -488,7 +619,7 @@ def comparison_bar(df: pd.DataFrame, name: str, session: str) -> go.Figure:
     if rec.empty:
         return go.Figure()
     rec = rec.iloc[0]
-    team = df[(df["session"] == session) & df["cmj"].notna()]
+    team = df[df["session"] == session]
     labels, player_vals, team_vals = [], [], []
     for m in RADAR_METRICS:
         # Use historical Z-scores for meaningful comparison
@@ -666,10 +797,10 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
         # which makes every session draw the same circle.
         vals = [team_radar_z(df, m, sessions)[si] for m in RADAR_METRICS]
         # Build hover showing actual raw team averages
-        sess_df = df[(df["session"] == sess) & df["cmj"].notna()]
+        sess_df = df[df["session"] == sess]
         hover_vals = []
         for m in RADAR_METRICS:
-            raw_avg = sess_df[m].mean() if m in sess_df.columns else None
+            raw_avg = pd.to_numeric(sess_df[m], errors="coerce").mean() if m in sess_df.columns else None
             unit = RAW_METRICS[m]["unit"]
             hover_vals.append(
                 f"{RAW_METRICS[m]['label']}: {raw_avg:.2f} {unit}"
@@ -1043,7 +1174,6 @@ from reportlab.platypus import (
 )
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
-from reportlab.pdfgen import canvas as rl_canvas
 
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
@@ -2334,7 +2464,9 @@ db = st.session_state.db
 # Load fresh from DB on every run — persistent across restarts
 df        = get_df()
 sessions  = db.get_sessions()  # chronological order from DB
-players   = sorted(df[df["cmj"].notna()]["name"].unique().tolist())
+# Include every player who has at least one metric value — not just CMJ players
+_any_metric = df[list(RAW_METRICS.keys())].notna().any(axis=1)
+players   = sorted(df[_any_metric]["name"].unique().tolist())
 last_sess = sessions[-1] if sessions else None
 prev_sess = sessions[-2] if len(sessions) > 1 else None
 
@@ -2353,12 +2485,21 @@ if not sessions:
     if st.button("📥 Laden", disabled=not (uploaded_first and new_sess_label.strip())):
         with st.spinner("Verarbeite..."):
             parsed = parse_excel(uploaded_first, new_sess_label.strip())
+            dbg = st.session_state.get("_last_parse_debug", {})
             if parsed.empty:
                 st.error("Keine Daten erkannt. Stelle sicher dass die Datei "
                          "das BVB Frauen Messprotokoll Format hat.")
+                if dbg:
+                    with st.expander("🔍 Erkannte Spalten — Debug"):
+                        for k, v in dbg.items():
+                            st.caption(f"{'✓' if isinstance(v, int) else '✕'} {k}: {v}")
             else:
                 db.upsert_session_from_df(parsed, new_sess_label.strip())
                 st.success(f"✓ {len(parsed)} Spielerinnen geladen!")
+                if dbg:
+                    with st.expander("🔍 Erkannte Spalten"):
+                        for k, v in dbg.items():
+                            st.caption(f"{'✓' if isinstance(v, int) else '✕'} {k}: {v}")
                 st.rerun()
     st.stop()  # Don't render the rest of the app until data exists
 
@@ -2372,7 +2513,8 @@ with st.sidebar:
 
     st.markdown("**Sessions**")
     for s in sessions:
-        n = len(df[(df["session"] == s) & df["cmj"].notna()])
+        _s_any = df[df["session"] == s][list(RAW_METRICS.keys())].notna().any(axis=1)
+        n = int(_s_any.sum())
         st.caption(f"• {s} — {n} Spielerinnen")
 
     st.divider()
@@ -2385,10 +2527,20 @@ with st.sidebar:
             if parsed.empty:
                 st.error("Keine Daten erkannt. Prüfe Spaltenbezeichnungen.")
             else:
-                # Save directly to DB — persists across restarts
                 db.upsert_session_from_df(parsed, new_sess_label.strip())
                 st.success(f"✓ {len(parsed)} Spielerinnen in DB gespeichert")
                 st.rerun()
+
+    # ── Column detection debug (shown after last upload) ─────────────────────
+    dbg = st.session_state.get("_last_parse_debug")
+    if dbg:
+        with st.expander("🔍 Erkannte Spalten", expanded=False):
+            for k, v in dbg.items():
+                if k == "name_col":
+                    st.caption(f"Name: Spalte {v}")
+                else:
+                    status = "✓" if isinstance(v, int) else "✕"
+                    st.caption(f"{status} {k}: {v}")
 
     st.divider()
     # Remove uploaded (non-seed) sessions
@@ -2437,7 +2589,7 @@ with tab_overview:
     # KPIs
     cols = st.columns(4)
     metrics_kpi = [
-        ("Spielerinnen", len(df[(df["session"] == last_sess) & df["cmj"].notna()]), ""),
+        ("Spielerinnen", int(df[df["session"] == last_sess][list(RAW_METRICS.keys())].notna().any(axis=1).sum()), ""),
         ("Ø CMJ", df[(df["session"] == last_sess)]["cmj"].mean(), "cm"),
         ("Ø VO2max", df[(df["session"] == last_sess)]["vo2max"].mean(), ""),
         ("Ø Sprint t20", df[(df["session"] == last_sess)]["t20"].mean(), "s"),
