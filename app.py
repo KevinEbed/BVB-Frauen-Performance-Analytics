@@ -152,6 +152,26 @@ ALLTIME_SD = {
 }
 
 
+_MONTH_NUM = {
+    "jan": 1,  "feb": 2,  "mär": 3,  "mar": 3,  "apr": 4,
+    "mai": 5,  "jun": 6,  "jul": 7,  "aug": 8,  "sep": 9,
+    "okt": 10, "nov": 11, "dez": 12,
+}
+
+def _session_key(s: str):
+    """Sort key for session labels like 'Nov 25', 'Apr 26'. Returns (year, month) tuple."""
+    parts = s.strip().split()
+    if len(parts) == 2:
+        mon = _MONTH_NUM.get(parts[0].lower(), 0)
+        try:
+            year = int(parts[1])
+            year = year + 2000 if year < 100 else year
+            return (year, mon)
+        except ValueError:
+            pass
+    return (9999, 0)
+
+
 def team_radar_z(df: pd.DataFrame, metric: str, sessions: list) -> list:
     """
     Compute Z-scores for each session's team average relative to the
@@ -394,7 +414,7 @@ def get_df() -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def compute_injury_flags(df: pd.DataFrame, threshold: float = 8.0):
-    sessions = sorted(df["session"].unique())
+    sessions = sorted(df["session"].unique(), key=_session_key)
     if len(sessions) < 2:
         return []
     last, prev = sessions[-1], sessions[-2]
@@ -454,7 +474,7 @@ def predict_next(df: pd.DataFrame, name: str) -> dict:
 @st.cache_data(show_spinner=False)
 def compute_clusters(df: pd.DataFrame, session: str = None):
     if session is None:
-        session = sorted(df["session"].unique())[-1]
+        session = sorted(df["session"].unique(), key=_session_key)[-1]
     sess_df = df[df["session"] == session].copy()
     feat_cols = ["cmj", "dj_rsi", "t5", "t20", "agility", "dribbling", "vo2max"]
     # Keep only columns present in df and with at least 1 value
@@ -511,7 +531,7 @@ def compute_clusters(df: pd.DataFrame, session: str = None):
 
 @st.cache_data(show_spinner=False)
 def generate_commentary(df: pd.DataFrame, name: str) -> dict:
-    sessions = sorted(df["session"].unique())
+    sessions = sorted(df["session"].unique(), key=_session_key)
     last = sessions[-1]
     prev = sessions[-2] if len(sessions) > 1 else None
     last_rec = df[(df["name"] == name) & (df["session"] == last)]
@@ -589,7 +609,7 @@ def radar_chart(df: pd.DataFrame, names: list, sessions: list = None, title: str
     Only axes with actual data are plotted (missing tests are omitted, not faked at 100).
     """
     fig = go.Figure()
-    all_sessions = sorted(df["session"].unique())
+    all_sessions = sorted(df["session"].unique(), key=_session_key)
     if sessions is None:
         sessions = all_sessions
 
@@ -791,7 +811,7 @@ def ranked_bar_chart(df: pd.DataFrame, metric: str, sessions_to_show: list = Non
     Players who did not participate show as 0 / are excluded.
     """
     info = RAW_METRICS[metric]
-    all_sessions = sorted(df["session"].unique())
+    all_sessions = sorted(df["session"].unique(), key=_session_key)
     if sessions_to_show is None:
         sessions_to_show = all_sessions[-2:] if len(all_sessions) >= 2 else all_sessions
 
@@ -916,7 +936,7 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
     data simply doesn't exist).
     Hover: Team avg raw · Score · Historical reference.
     """
-    sessions = sorted(df["session"].unique())
+    sessions = sorted(df["session"].unique(), key=_session_key)
     fig = go.Figure()
     palette = ["#60A5FA", "#FDE000", "#4ADE80", "#FB923C"]
 
@@ -2089,7 +2109,7 @@ def _safe_col(df_slice, metric: str) -> pd.Series:
 def generate_team_pdf(df: pd.DataFrame) -> bytes:
     S = style()
     buf = io.BytesIO()
-    ALL_SESSIONS = sorted(df["session"].unique().tolist())
+    ALL_SESSIONS = sorted(df["session"].unique().tolist(), key=_session_key)
     last_sess = ALL_SESSIONS[-1]
     last_df   = df[df["session"] == last_sess]
     n_players = last_df["name"].nunique()
@@ -2415,7 +2435,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
 def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
     S = style()
     buf = io.BytesIO()
-    ALL_SESSIONS = sorted(df["session"].unique().tolist())
+    ALL_SESSIONS = sorted(df["session"].unique().tolist(), key=_session_key)
     last_sess = ALL_SESSIONS[-1]
 
     p_df = df[df["name"] == player].sort_values("session")
