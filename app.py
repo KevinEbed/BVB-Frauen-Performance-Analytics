@@ -787,15 +787,14 @@ def comparison_bar(df: pd.DataFrame, name: str, session: str) -> go.Figure:
     team = df[df["session"] == session]
     labels, player_vals, team_vals = [], [], []
     for m in RADAR_METRICS:
-        # Use historical Z-scores for meaningful comparison
-        pz = hist_z(m, rec.get(m))
+        pz = normalize_score(m, rec.get(m), df, session)
         if pz is None:
             continue
-        # Team average Z for this session — skip metric if team has no data either
         team_metric_vals = pd.to_numeric(team[m], errors="coerce").dropna()
         if len(team_metric_vals) == 0:
             continue
-        team_zs = [hist_z(m, v) for v in team_metric_vals if hist_z(m, v) is not None]
+        team_zs = [normalize_score(m, v, df, session) for v in team_metric_vals]
+        team_zs = [z for z in team_zs if z is not None]
         if not team_zs:
             continue
         tz = np.mean(team_zs)
@@ -2326,28 +2325,20 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
     story.append(score_card_table(cards))
     story.append(PageBreak())
 
-    # ── PAGE 2: TEAM RADAR + TEAM INSIGHTS ────────────────────────────────
+    # ── PAGE 2: OVERALL TEAM RADAR + INSIGHTS ────────────────────────────
     rl_section(story, "Squad Benchmark Summary", S)
 
-    # Build team average axis scores — only include axes with actual data
-    team_axis = {}
-    for ax, metrics in PDF_RADAR_AXES.items():
-        z_vals = []
-        for m in metrics:
-            col = pd.to_numeric(last_df[m], errors="coerce").dropna()
-            z_vals += [hist_z(m, v) for v in col if hist_z(m, v) is not None]
-        if z_vals:
-            team_axis[ax] = round(np.mean(z_vals), 1)
-        # axes with no data are excluded from the dict → chart_radar will filter them out
+    # Overall team axis scores for latest session (session-relative)
+    team_axis = team_axis_scores(df, last_sess)
+    # Reference ring: grand cross-session mean = 100 for all axes
+    ref_axis   = {ax: 100 for ax in team_axis if team_axis[ax] is not None}
 
-    # Elite benchmark = 108 for axes that have data
-    elite_axis = {ax: 108 for ax in team_axis}
-
-    radar_bytes = chart_radar(team_axis, elite_axis,
-                              title="Team Ø vs Elite-Referenz (Z=108)")
+    radar_bytes = chart_radar(team_axis, ref_axis,
+                              title=f"Team Ø · {last_sess} vs Gesamt-Schnitt")
     story.append(img_flowable(radar_bytes, width_cm=12))
-    story.append(Paragraph("Radar basiert auf historischen Z-Scores (Referenz: MW seit Jul 2023). "
-                            "Außenring = Elite-Niveau (Z≥108).", S["caption"]))
+    story.append(Paragraph(
+        "Radar zeigt session-relative Scores (100 = Teamdurchschnitt dieser Session). "
+        "Grauer Ring = Referenz (100).", S["caption"]))
     story.append(Spacer(1, 0.3 * cm))
 
     # Team insights
@@ -2357,19 +2348,31 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
         story.append(Paragraph(ins, S["insight"]))
     story.append(Spacer(1, 0.2 * cm))
 
-    # Session stats table
-    rl_sub(story, "Mannschaft · Statistische Übersicht", S)
-    for sess in ALL_SESSIONS:
-        s_df = df[df["session"] == sess]
-        story.append(Paragraph(f"<b>{sess}</b>", S["body"]))
-        story.append(Spacer(1, 0.1 * cm))
+    # ── PER-SESSION RADAR + STATS TABLE ──────────────────────────────────
+    rl_sub(story, "Mannschaft · Session-Übersicht", S)
+    METRIC_GROUPS = [
+        ("Sprint", ["t5", "t10", "t20", "t30"]),
+        ("Power",  ["cmj", "dj_rsi"]),
+        ("Fitness",["agility", "dribbling", "vo2max"]),
+    ]
+    col_w = [3.2*cm, 2.5*cm, 2.3*cm, 2.0*cm, 2.3*cm, 2.3*cm]
 
-        METRIC_GROUPS = [
-            ("Sprint", ["t5","t10","t20","t30"]),
-            ("Power",  ["cmj","dj_rsi"]),
-            ("Fitness",["agility","dribbling","vo2max"]),
-        ]
-        col_w = [3.2*cm, 2.5*cm, 2.3*cm, 2.0*cm, 2.3*cm, 2.3*cm]
+    for sess in ALL_SESSIONS:
+        story.append(PageBreak())
+        rl_sub(story, f"Session: {sess}", S)
+
+        # Radar for this session vs cross-session grand mean
+        sess_radar_bytes = chart_team_session_radar_pdf(df, sess)
+        if sess_radar_bytes:
+            story.append(img_flowable(sess_radar_bytes, width_cm=10))
+            story.append(Paragraph(
+                f"Team-Radar {sess}: Score 100 = Durchschnitt über alle Sessions. "
+                "Gelb = diese Session, Grau gestrichelt = Gesamt-Ø.",
+                S["caption"]))
+            story.append(Spacer(1, 0.2 * cm))
+
+        # Stats table for this session
+        s_df = df[df["session"] == sess]
         hrow = [Paragraph(h, S["th"])
                 for h in ["Gruppe · Metrik", "Messgröße", "Mittelwert", "SD", "Min", "Max"]]
         rows = [hrow]
@@ -2387,7 +2390,6 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
                     Paragraph(fmt(col.max(),  dec) if len(col) else "—", S["body"]),
                 ])
                 first = False
-
         story.append(styled_table(rows, col_w))
         story.append(Spacer(1, 0.3 * cm))
 
@@ -2481,53 +2483,50 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
     story.append(PageBreak())
     rl_section(story, "Individuelle Leistungsprofile", S)
 
-    # Team axis scores for comparison in player cards
     all_players_sorted = sorted(df["name"].unique())
     for player in all_players_sorted:
         p_df = _sort_by_session(df[df["name"] == player])
         if p_df.empty:
             continue
-        p_sessions = p_df["session"].tolist()
+        p_sessions  = p_df["session"].tolist()
         last_p_sess = p_sessions[-1]
         p_last_row  = p_df[p_df["session"] == last_p_sess].iloc[0]
 
-        p_axis = player_axis_scores(p_last_row)
-        t_axis = team_axis
+        # Session-relative axis scores
+        p_axis = player_axis_scores(p_last_row, df, last_p_sess)
+        t_axis = team_axis_scores(df, last_p_sess)
 
-        # Score cards — only include axes/metrics that were actually tested
-        avail_p2 = set(get_available_metrics(df, last_p_sess))
-        overall_z = weighted_overall_z(p_last_row, list(avail_p2)) or \
+        # Score cards
+        avail_p2  = set(get_available_metrics(df, last_p_sess))
+        overall_z = weighted_overall_z(p_last_row, list(avail_p2), df, last_p_sess) or \
                     np.mean([v for v in p_axis.values() if v is not None] or [100])
-        badge, bc  = z_to_badge(overall_z)
-        cmj_v  = p_last_row.get("cmj")
-        t20_v  = p_last_row.get("t20")
-        vo2_v  = p_last_row.get("vo2max")
-        rsi_v  = p_last_row.get("dj_rsi")
+        badge, bc = z_to_badge(overall_z)
+        cmj_v = p_last_row.get("cmj")
+        t20_v = p_last_row.get("t20")
+        vo2_v = p_last_row.get("vo2max")
+        rsi_v = p_last_row.get("dj_rsi")
         p_cards = [
-            ("OVERALL",    f"Z = {overall_z:.0f}", badge, bc),
+            ("OVERALL",    f"Score {overall_z:.0f}", badge, bc),
             ("CMJ",        fmt(cmj_v, 1) + " cm" if cmj_v else "—",
-             *z_to_badge(hist_z("cmj", cmj_v))),
-            ("SPRINT 20m", fmt(t20_v, 2) + " s" if t20_v else "—",
-             *z_to_badge(hist_z("t20", t20_v))),
-            ("VO2MAX",     fmt(vo2_v, 1) if vo2_v else "—",
-             *z_to_badge(hist_z("vo2max", vo2_v))),
+             *z_to_badge(normalize_score("cmj", cmj_v, df, last_p_sess))),
+            ("SPRINT 20m", fmt(t20_v, 2) + " s"  if t20_v else "—",
+             *z_to_badge(normalize_score("t20", t20_v, df, last_p_sess))),
+            ("VO2MAX",     fmt(vo2_v, 1)           if vo2_v else "—",
+             *z_to_badge(normalize_score("vo2max", vo2_v, df, last_p_sess))),
         ]
         if "dj_rsi" in avail_p2:
             p_cards.append(("DJ RSI", fmt(rsi_v, 2) if rsi_v else "—",
-                             *z_to_badge(hist_z("dj_rsi", rsi_v))))
+                             *z_to_badge(normalize_score("dj_rsi", rsi_v, df, last_p_sess))))
 
-        radar_bytes = chart_radar(p_axis, t_axis,
-                                  title=f"{player} vs Team Ø")
+        radar_bytes = chart_radar(p_axis, t_axis, title=f"{player} vs Team Ø")
 
-        dec_map = PDF_DEC_MAP
         col_w_p = [3.8*cm] + [min(2.8*cm, (W_BODY-3.8*cm)/len(p_sessions))] * len(p_sessions)
-        hrow = [Paragraph("Test", S["th"])] + \
-               [Paragraph(s, S["th"]) for s in p_sessions]
+        hrow = [Paragraph("Test", S["th"])] + [Paragraph(s, S["th"]) for s in p_sessions]
         p_rows = [hrow]
         for grp, metrics in [
-            ("Sprint", ["t5","t10","t20","t30"]),
-            ("Power",  ["cmj","dj_rsi"]),
-            ("Fitness",["agility","dribbling","vo2max"]),
+            ("Sprint",  ["t5","t10","t20","t30"]),
+            ("Power",   ["cmj","dj_rsi"]),
+            ("Fitness", ["agility","dribbling","vo2max"]),
         ]:
             first = True
             for mk in metrics:
@@ -2540,7 +2539,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
                     v = pd.to_numeric(rec.iloc[0].get(mk), errors="coerce") \
                         if not rec.empty else None
                     r_data.append(Paragraph(
-                        fmt(v, dec_map.get(mk, 2)) if v is not None and pd.notna(v) else "X",
+                        fmt(v, PDF_DEC_MAP.get(mk, 2)) if v is not None and pd.notna(v) else "X",
                         S["body"]))
                 p_rows.append(r_data)
 
@@ -2556,20 +2555,26 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
             Spacer(1, 0.15 * cm),
         ]
 
-        # Radar + table side by side
+        # Radar + data table side by side
         radar_img = img_flowable(radar_bytes, width_cm=8.5)
         tbl = styled_table(p_rows, col_w_p)
-        side_table = Table(
-            [[radar_img, tbl]],
-            colWidths=[9 * cm, W_BODY - 9 * cm],
-        )
+        side_table = Table([[radar_img, tbl]],
+                           colWidths=[9 * cm, W_BODY - 9 * cm])
         side_table.setStyle(TableStyle([
-            ("VALIGN", (0,0), (-1,-1), "TOP"),
-            ("LEFTPADDING", (0,0), (-1,-1), 0),
-            ("RIGHTPADDING", (0,0), (-1,-1), 0),
+            ("VALIGN",       (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING",  (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
         ]))
         block.append(side_table)
         block.append(Spacer(1, 0.15 * cm))
+
+        # Leistungsentwicklung (only if ≥2 sessions)
+        if len(p_sessions) >= 2:
+            trend_bytes = chart_trend(player, df)
+            if trend_bytes:
+                block.append(Paragraph("<b>Leistungsentwicklung</b>", S["sub"]))
+                block.append(img_flowable(trend_bytes, width_cm=W_BODY / cm))
+                block.append(Spacer(1, 0.1 * cm))
 
         if insights_p:
             block.append(Paragraph("<b>Performance-Analyse</b>", S["sub"]))
@@ -2582,7 +2587,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
             for rec in recs_p:
                 block.append(Paragraph(rec, S["body"]))
 
-        block.append(Spacer(1, 0.45 * cm))
+        block.append(Spacer(1, 0.4 * cm))
         block.append(HRFlowable(width="100%", thickness=0.75,
                                  color=colors.HexColor("#CCCCCC"),
                                  spaceAfter=2, spaceBefore=2))
@@ -2613,21 +2618,14 @@ def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
     p_last_row  = p_df[p_df["session"] == last_p_sess].iloc[0]
     last_df     = df[df["session"] == last_sess]
 
-    # Build comparison scores — only axes with real data
-    p_axis = player_axis_scores(p_last_row)
-    team_axis = {}
-    for ax, metrics in PDF_RADAR_AXES.items():
-        z_vals = []
-        for m in metrics:
-            col = pd.to_numeric(last_df[m], errors="coerce").dropna()
-            z_vals += [hist_z(m, v) for v in col if hist_z(m, v) is not None]
-        if z_vals:
-            team_axis[ax] = round(np.mean(z_vals), 1)
+    # Session-relative axis scores
+    p_axis    = player_axis_scores(p_last_row, df, last_p_sess)
+    team_axis = team_axis_scores(df, last_p_sess)
 
     avail_metrics = get_available_metrics(df, last_p_sess)
-    overall_z = weighted_overall_z(p_last_row, avail_metrics) or \
+    overall_z = weighted_overall_z(p_last_row, avail_metrics, df, last_p_sess) or \
                 np.mean([v for v in p_axis.values() if v is not None] or [100])
-    badge, bc  = z_to_badge(overall_z)
+    badge, bc = z_to_badge(overall_z)
 
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
@@ -2650,21 +2648,21 @@ def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
     rsi_v = p_last_row.get("dj_rsi")
     avail_p = set(get_available_metrics(df, last_p_sess))
 
-    overall_z_val = weighted_overall_z(p_last_row, list(avail_p)) or overall_z
+    overall_z_val = weighted_overall_z(p_last_row, list(avail_p), df, last_p_sess) or overall_z
     badge, bc  = z_to_badge(overall_z_val)
 
     cards = [
-        ("OVERALL SCORE", f"Z = {overall_z_val:.0f}", badge, bc),
+        ("OVERALL SCORE", f"Score {overall_z_val:.0f}", badge, bc),
         ("CMJ HEIGHT",   fmt(cmj_v,1)+" cm" if cmj_v else "—",
-         *z_to_badge(hist_z("cmj", cmj_v))),
+         *z_to_badge(normalize_score("cmj", cmj_v, df, last_p_sess))),
         ("SPRINT 20m",   fmt(t20_v,2)+" s" if t20_v else "—",
-         *z_to_badge(hist_z("t20", t20_v))),
+         *z_to_badge(normalize_score("t20", t20_v, df, last_p_sess))),
         ("VO2MAX",       fmt(vo2_v,1) if vo2_v else "—",
-         *z_to_badge(hist_z("vo2max", vo2_v))),
+         *z_to_badge(normalize_score("vo2max", vo2_v, df, last_p_sess))),
     ]
     if "dj_rsi" in avail_p:
         cards.append(("DJ RSI", fmt(rsi_v,2) if rsi_v else "—",
-                       *z_to_badge(hist_z("dj_rsi", rsi_v))))
+                       *z_to_badge(normalize_score("dj_rsi", rsi_v, df, last_p_sess))))
     story.append(score_card_table(cards))
     story.append(Spacer(1, 0.3 * cm))
 
@@ -2691,19 +2689,19 @@ def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
         story.append(img_flowable(radar_bytes, 10))
 
     story.append(Paragraph(
-        "Links: Sechsachsen-Radar (Spielerin gelb, Team Ø grau). "
-        "Rechts: Z-Score je Metrik (grün=stark, rot=Entwicklungsfeld).",
+        "Links: Radar (Spielerin gelb, Team Ø grau) — session-relative Scores, 100 = Teamdurchschnitt. "
+        "Rechts: Score je Metrik (grün=stark, rot=Entwicklungsfeld).",
         S["caption"]))
     story.append(Spacer(1, 0.2 * cm))
 
-    # ── TREND (if multiple sessions) ─────────────────────────────────────────
+    # ── LEISTUNGSENTWICKLUNG (if multiple sessions) ───────────────────────────
     if len(p_sessions) >= 2:
-        rl_section(story, "Performance Trend", S)
+        rl_section(story, "Leistungsentwicklung", S)
         trend_bytes = chart_trend(player, df)
         if trend_bytes:
             story.append(img_flowable(trend_bytes, 16))
             story.append(Paragraph(
-                "Z-Score-Entwicklung über alle Sessions (Referenz: historischer Mannschaftsdurchschnitt).",
+                "Rohdaten-Entwicklung über alle Sessions. Jeder Datenpunkt = Messwert der Session.",
                 S["caption"]))
             story.append(Spacer(1, 0.2 * cm))
 
