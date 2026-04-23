@@ -455,11 +455,19 @@ def predict_next(df: pd.DataFrame, name: str) -> dict:
 def compute_clusters(df: pd.DataFrame, session: str = None):
     if session is None:
         session = sorted(df["session"].unique())[-1]
-    sess_df = df[(df["session"] == session) & df["cmj"].notna()].copy()
-    feat_cols = ["cmj", "dj_rsi", "t5", "t20", "agility", "vo2max"]
-    feat_df = sess_df[["name"] + feat_cols].dropna()
+    sess_df = df[df["session"] == session].copy()
+    feat_cols = ["cmj", "dj_rsi", "t5", "t20", "agility", "dribbling", "vo2max"]
+    # Keep only columns present in df and with at least 1 value
+    feat_cols = [c for c in feat_cols if c in sess_df.columns and sess_df[c].notna().any()]
+    feat_df = sess_df[["name"] + feat_cols].copy()
+    # Drop players with ALL features missing
+    feat_df = feat_df[feat_df[feat_cols].notna().any(axis=1)]
     if len(feat_df) < 4:
         return pd.DataFrame()
+    # Impute missing values with column mean so no player is dropped
+    for c in feat_cols:
+        col_mean = feat_df[c].mean()
+        feat_df[c] = feat_df[c].fillna(col_mean)
     X = feat_df[feat_cols].values.copy()
     for i, col in enumerate(feat_cols):
         if not RAW_METRICS[col]["hib"]:
@@ -471,14 +479,18 @@ def compute_clusters(df: pd.DataFrame, session: str = None):
     archetype_names = ["⚡ Explosiv-Kraft", "🏃 Schnelligkeit", "🫁 Ausdauer", "🎯 Allround"]
     archetype_colors = ["#FDE000", "#60A5FA", "#4ADE80", "#FB923C"]
     cluster_props = []
+    _idx = {col: i for i, col in enumerate(feat_cols)}
     for ci in range(km.n_clusters):
         mask = labels == ci
         if not mask.any():
             continue
         c = X_s[mask].mean(axis=0)
-        power = (c[0] + c[1]) / 2
-        speed = (c[2] + c[3] + c[4]) / 3
-        endurance = c[5]
+        power_cols  = [f for f in ["cmj", "dj_rsi"] if f in _idx]
+        speed_cols  = [f for f in ["t5", "t20", "agility", "dribbling"] if f in _idx]
+        endur_cols  = [f for f in ["vo2max"] if f in _idx]
+        power    = float(np.mean([c[_idx[f]] for f in power_cols]))  if power_cols  else 0.0
+        speed    = float(np.mean([c[_idx[f]] for f in speed_cols]))  if speed_cols  else 0.0
+        endurance= float(np.mean([c[_idx[f]] for f in endur_cols]))  if endur_cols  else 0.0
         spread = max(power, speed, endurance) - min(power, speed, endurance)
         if spread < 0.5:
             arch = 3
@@ -2859,8 +2871,8 @@ with tab_overview:
     with col3:
         st.markdown("#### Team Entwicklung")
         if prev_sess:
-            trend_metrics = ["cmj", "dj_rsi", "t5", "t20", "agility", "vo2max"]
-            trend_labels  = ["CMJ", "DJ RSI", "t5", "t20", "Agility", "VO2max"]
+            trend_metrics = ["cmj", "dj_rsi", "t5", "t20", "agility", "dribbling", "vo2max"]
+            trend_labels  = ["CMJ", "DJ RSI", "t5", "t20", "Agility", "Dribbling", "VO2max"]
             deltas = []
             for m, l in zip(trend_metrics, trend_labels):
                 v_last = df[df["session"] == last_sess][m].mean()
