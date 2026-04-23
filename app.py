@@ -177,18 +177,18 @@ def _to_float(raw_val) -> float | None:
 
 def parse_excel(file, session_label: str) -> pd.DataFrame:
     """
-    Parse BVB Leistungsdiagnostik Excel (multi-row header).
+    Parse BVB Leistungsdiagnostik Excel (multi-row merged headers).
 
-    Header layout (2 rows):
-      Row A: Section group labels  — "CMJ Sprunghöhe DVJ", "Sprint", "Agility Test",
-                                      "Dribbling Test", "Yo-Yo …"
-      Row B: Individual sub-columns — "best", "RSI", "t5(1)", …, "t1", "t1","t2","best", …
+    Robust group-context approach:
+      1. Detect group-header row  (has 'Agility Test', 'Dribbling Test', 'Sprint', …)
+      2. Detect sub-column row    (has 'Spieler', 't1', 'best', …)
+      3. Propagate merged group headers rightward so every column knows its group
+      4. Map (group, sub_label) pairs → metric keys
+      5. Data starts at sub_row + 1  (dynamic, not hardcoded to row 2)
 
-    Strategy: two-pass scan.
-      Pass 1 — Collect section anchors (col positions where group labels appear)
-               and any directly named metric columns.
-      Pass 2 — For agility/dribbling not yet found, walk right from the section
-               anchor to find the best/t1 sub-column.
+    This correctly handles the BVB Excel structure where:
+      group_row:  CMJ Sprunghöhe | ··· | Sprint | Agility Test | Dribbling Test | Yo-Yo …
+      sub_row:    Spieler | 1 | 2 | 3 | best | … | t5(1) | … | t1 | t1 | t2 | best | …
     """
     xl = pd.ExcelFile(file)
     months = ["jan","feb","mär","mar","apr","mai","jun","jul","aug","sep","okt","nov","dez"]
@@ -197,124 +197,139 @@ def parse_excel(file, session_label: str) -> pd.DataFrame:
         xl.sheet_names[0],
     )
     raw = pd.read_excel(file, sheet_name=sheet, header=None)
-
     n_cols = len(raw.columns)
-    n_header = min(6, len(raw))
+    n_rows = len(raw)
 
+    # ── Step 1: Find group-header row and sub-column row ─────────────────────
+    # Group row has section labels like "Agility Test", "Sprint", "CMJ Sprunghöhe"
+    # Sub row has "Spieler" + individual column labels like "t1", "best", "t5(1)"
+    GROUP_SIGNALS = ("agility", "dribbling", "illinois", "sprint", "yo-yo", "yoyo")
+
+    group_row = -1
+    sub_row   = -1
+
+    for ri in range(min(8, n_rows)):
+        texts  = [_cell(raw, ri, ci) for ci in range(n_cols)]
+        joined = " ".join(texts)
+        if any(sig in joined for sig in GROUP_SIGNALS) and group_row == -1:
+            group_row = ri
+        if any(k in joined for k in ("spieler", "nachname")) and sub_row == -1:
+            sub_row = ri
+        if group_row != -1 and sub_row != -1:
+            break
+
+    # Collapsed header: single row contains both group labels and sub-labels
+    if group_row == -1 and sub_row != -1:
+        group_row = sub_row
+    if sub_row == -1 and group_row != -1:
+        sub_row = group_row
+    if group_row == -1:
+        return pd.DataFrame()
+
+    data_start = sub_row + 1
+    same_row   = (group_row == sub_row)
+
+    # ── Step 2: Propagate merged group labels rightward ───────────────────────
+    # Pandas puts merged cell value at leftmost col; adjacent cols are NaN.
+    # Walk left-to-right and carry the last non-empty group label forward.
+    group_of: list[str] = [""] * n_cols
+    current_group = ""
+    for ci in range(n_cols):
+        g = _cell(raw, group_row, ci)
+        if g:
+            current_group = g
+        group_of[ci] = current_group
+
+    # ── Step 3: Map (group, sub_label) → col_map ─────────────────────────────
     name_col = -1
     col_map: dict[str, int] = {}
-    section_anchors: dict[str, int] = {}  # section → leftmost col of its header cell
 
-    # ── PASS 1: scan all header rows ──────────────────────────────────────────
-    for ri in range(n_header):
-        for ci in range(n_cols):
-            s = _cell(raw, ri, ci)
-            if not s:
-                continue
+    for ci in range(n_cols):
+        group = group_of[ci]
+        sub   = _cell(raw, sub_row, ci) if not same_row else group
 
-            # Player name
-            if any(k in s for k in ("spieler", "nachname", "name")):
-                name_col = ci
+        # Player name column
+        if any(k in sub for k in ("spieler", "nachname", "name")) and name_col == -1:
+            name_col = ci
 
-            # Section group anchors (these are wide/merged label cells)
-            if "agility" in s or "illinois" in s:
-                section_anchors.setdefault("agility", ci)
-            if "dribbling" in s or "dribble" in s:
-                section_anchors.setdefault("dribbling", ci)
+        # ── CMJ best ─────────────────────────────────────────────────────────
+        # Group header spans multiple cols (1, 2, 3, best).
+        # Only take the column whose sub-label is "best".
+        if "cmj" in group:
+            if sub == "best":
+                col_map["cmj"] = ci              # definitive best-attempt column
+            elif same_row and any(k in group for k in ("best", "höhe", "sprunghöhe")):
+                col_map.setdefault("cmj", ci)    # single-row fallback
 
-            # CMJ — look for "best" or "sprunghöhe" qualifier to avoid false matches
-            if "cmj" in s and any(k in s for k in ("best","höhe","jump","sprunghöhe")):
-                col_map["cmj"] = ci
-            # CMJ standalone — take the "best" column in the cmj section
-            if s in ("cmj",) and "cmj" not in section_anchors:
-                section_anchors["cmj"] = ci
+        # ── DJ RSI ───────────────────────────────────────────────────────────
+        if "rsi" in sub or (same_row and "rsi" in group):
+            col_map.setdefault("dj_rsi", ci)
 
-            # DJ RSI
-            if "rsi" in s:
-                col_map["dj_rsi"] = ci
+        # ── Sprint — first occurrence = round 1, which is what we use ────────
+        if re.match(r'^t5[\s\(\[]|^t5$', sub):
+            col_map.setdefault("t5", ci)
+        if re.match(r'^t10[\s\(\[]|^t10$', sub):
+            col_map.setdefault("t10", ci)
+        if re.match(r'^t20[\s\(\[]|^t20$', sub):
+            col_map.setdefault("t20", ci)
+        if re.match(r'^t30[\s\(\[]|^t30$', sub):
+            col_map.setdefault("t30", ci)
 
-            # Sprint — accept t5, t5(1), t5(2), t5 (1) … take FIRST occurrence only
-            if re.match(r'^t5[\s\(\[]', s) or s == "t5":
-                col_map.setdefault("t5", ci)
-            if re.match(r'^t10[\s\(\[]', s) or s == "t10":
-                col_map.setdefault("t10", ci)
-            if re.match(r'^t20[\s\(\[]', s) or s == "t20":
-                col_map.setdefault("t20", ci)
-            if re.match(r'^t30[\s\(\[]', s) or s == "t30":
-                col_map.setdefault("t30", ci)
-
-            # VO2max
-            if "vo2" in s:
-                col_map["vo2max"] = ci
-
-            # Agility/Dribbling: direct detection when label is combined in one cell
-            if ("agility" in s or "illinois" in s) and any(k in s for k in ("best","t1","t2","time","zeit")):
-                col_map["agility"] = ci
-            if ("dribbling" in s or "dribble" in s) and any(k in s for k in ("best","t1","t2","time","zeit")):
-                col_map["dribbling"] = ci
-            # Exact standalone labels
-            if s in ("agility", "illinois"):
+        # ── Agility ──────────────────────────────────────────────────────────
+        # BVB sheet: "Agility Test" group with single "t1" sub-column.
+        # "best" override handles sheets that also add a best column.
+        if "agility" in group or "illinois" in group:
+            if sub == "best":
+                col_map["agility"] = ci          # prefer best if present
+            elif sub == "t1" and "agility" not in col_map:
+                col_map["agility"] = ci           # t1 is the only trial → use it
+            elif same_row and any(k in group for k in ("best","t1","t2","time")):
                 col_map.setdefault("agility", ci)
-            if s in ("dribbling", "dribble"):
+
+        # ── Dribbling ─────────────────────────────────────────────────────────
+        # BVB sheet: "Dribbling Test" group with t1, t2, best sub-columns.
+        # Always prefer "best"; fall back to t1 only if best not found.
+        if "dribbling" in group or "dribble" in group:
+            if sub == "best":
+                col_map["dribbling"] = ci        # override any previous t1 assignment
+            elif sub == "t1" and "dribbling" not in col_map:
+                col_map["dribbling"] = ci
+            elif same_row and any(k in group for k in ("best","t1","t2","time")):
                 col_map.setdefault("dribbling", ci)
 
-    # ── PASS 2: section-context lookup for agility / dribbling ────────────────
-    def _find_sub_col(anchor_ci: int, want_best_first: bool = True) -> int | None:
-        """
-        Starting at anchor_ci, scan right across all header rows.
-        Returns col index of 'best' (preferred) or first 't1'/'t2' found.
-        """
-        best_ci = t1_ci = None
-        for ri in range(n_header):
-            for ci in range(anchor_ci, min(anchor_ci + 10, n_cols)):
-                s = _cell(raw, ri, ci)
-                if s == "best" and best_ci is None:
-                    best_ci = ci
-                if s in ("t1", "t2", "time", "zeit") and t1_ci is None:
-                    t1_ci = ci
-        if want_best_first:
-            return best_ci if best_ci is not None else t1_ci
-        return t1_ci if t1_ci is not None else best_ci
-
-    if "agility" not in col_map and "agility" in section_anchors:
-        # Agility usually has only one value (t1) — no "best" column
-        ci = _find_sub_col(section_anchors["agility"], want_best_first=False)
-        if ci is not None:
-            col_map["agility"] = ci
-
-    if "dribbling" not in col_map and "dribbling" in section_anchors:
-        # Dribbling has t1, t2, best — prefer best
-        ci = _find_sub_col(section_anchors["dribbling"], want_best_first=True)
-        if ci is not None:
-            col_map["dribbling"] = ci
-
-    # ── CMJ best-column fallback ───────────────────────────────────────────────
-    if "cmj" not in col_map and "cmj" in section_anchors:
-        ci = _find_sub_col(section_anchors["cmj"], want_best_first=True)
-        if ci is not None:
-            col_map["cmj"] = ci
+        # ── VO2max ────────────────────────────────────────────────────────────
+        if "vo2" in sub or (same_row and "vo2" in group):
+            col_map.setdefault("vo2max", ci)
 
     if name_col == -1:
         return pd.DataFrame()
 
-    # ── Debug log (visible in sidebar when columns are found) ─────────────────
+    # ── Debug state (shown in sidebar expander after each upload) ────────────
     _parse_debug = {
+        "sheet": sheet,
+        "group_row": group_row,
+        "sub_row": sub_row,
+        "data_start": data_start,
         "name_col": name_col,
-        "agility": col_map.get("agility", "NOT FOUND"),
-        "dribbling": col_map.get("dribbling", "NOT FOUND"),
-        **{k: col_map.get(k, "—") for k in ("cmj","dj_rsi","t5","t10","t20","t30","vo2max")},
+        **{k: col_map.get(k, "NOT FOUND")
+           for k in ("cmj","dj_rsi","t5","t10","t20","t30","agility","dribbling","vo2max")},
     }
     st.session_state["_last_parse_debug"] = _parse_debug
 
     # ── Build records ─────────────────────────────────────────────────────────
+    _SKIP_NAMES = {"spieler","nachname","vorname","name","mw","sd","mittelwert","mean","avg"}
     records = []
-    for _, row in raw.iloc[2:].iterrows():
-        name = row.iloc[name_col]
+    for ri in range(data_start, n_rows):
+        name = raw.iloc[ri, name_col]
         if not isinstance(name, str) or len(name.strip()) < 2:
+            continue
+        if name.strip().lower() in _SKIP_NAMES:
+            continue
+        if name.strip().replace(".", "").replace(",", "").replace(" ", "").isnumeric():
             continue
         rec = {"name": name.strip(), "session": session_label}
         for key, ci in col_map.items():
-            rec[key] = _to_float(row.iloc[ci])
+            rec[key] = _to_float(raw.iloc[ri, ci])
         for key in RAW_METRICS:
             if key not in rec:
                 rec[key] = None
@@ -2535,12 +2550,16 @@ with st.sidebar:
     dbg = st.session_state.get("_last_parse_debug")
     if dbg:
         with st.expander("🔍 Erkannte Spalten", expanded=False):
-            for k, v in dbg.items():
-                if k == "name_col":
-                    st.caption(f"Name: Spalte {v}")
-                else:
-                    status = "✓" if isinstance(v, int) else "✕"
-                    st.caption(f"{status} {k}: {v}")
+            # Structural info
+            for k in ("sheet", "group_row", "sub_row", "data_start", "name_col"):
+                if k in dbg:
+                    st.caption(f"  {k}: {dbg[k]}")
+            st.caption("---")
+            # Metric columns
+            for k in ("cmj","dj_rsi","t5","t10","t20","t30","agility","dribbling","vo2max"):
+                v = dbg.get(k, "NOT FOUND")
+                status = "✓" if isinstance(v, int) else "✕"
+                st.caption(f"{status} {k}: {v}")
 
     st.divider()
     # Remove uploaded (non-seed) sessions
