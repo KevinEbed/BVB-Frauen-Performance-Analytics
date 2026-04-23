@@ -702,7 +702,9 @@ def radar_chart(df: pd.DataFrame, names: list, sessions: list = None, title: str
 
 @st.cache_data(show_spinner=False)
 def trend_chart(df: pd.DataFrame, name: str) -> go.Figure:
-    hist = df[df["name"] == name].sort_values("session")
+    player_df = df[df["name"] == name].copy()
+    player_df["_sk"] = player_df["session"].map(_session_key)
+    hist = player_df.sort_values("_sk").drop(columns=["_sk"])
     sessions = hist["session"].tolist()
     metrics_to_plot = [
         ("cmj", "CMJ (cm)", "#FDE000"),
