@@ -57,18 +57,10 @@ RAW_METRICS = {
 RADAR_METRICS = ["cmj", "dj_rsi", "t5", "t10", "t20", "t30", "agility", "dribbling", "vo2max"]
 RADAR_LABELS  = ["CMJ", "DJ RSI", "t5", "t10", "t20", "t30", "Agility", "Dribbling", "VO2max"]
 
-# Historical reference MW/SD seit Jul 2023 (from Zusammenfassung_1_Mannschaft.xlsx)
-# Used for player radar Z-scores — more meaningful than session-relative Z
-HIST_MW = {
-    "cmj": 31.780, "dj_rsi": 1.630, "t5": 1.082, "t10": 1.884,
-    "t20": 3.329,  "t30": 4.660, "agility": 16.332,
-    "dribbling": 10.331, "vo2max": 49.538,
-}
-HIST_SD = {
-    "cmj": 4.160, "dj_rsi": 0.294, "t5": 0.046, "t10": 0.073,
-    "t20": 0.132, "t30": 0.192, "agility": 0.663,
-    "dribbling": 0.639, "vo2max": 4.378,
-}
+# Historical reference removed — data was mixed across 3 teams (not BVB-specific).
+# All scoring is now session-relative or cross-session (grand mean/SD of own data).
+HIST_MW: dict = {}
+HIST_SD: dict = {}
 
 def hist_z(metric: str, value) -> float:
     """Z-score vs historical mean (Jul 2023–present). Same formula as Benedikt's Netzdiagramme."""
@@ -1098,9 +1090,9 @@ def get_available_metrics(df: pd.DataFrame, session: str, min_coverage: float = 
     return [m for m in RAW_METRICS if coverage.get(m, 0) >= min_coverage]
 
 
-def weighted_overall_z(player_row, available_metrics: list):
-    """Mean Z-score across only the metrics that were tested. Returns None if no data."""
-    zs = [hist_z(m, player_row.get(m)) for m in available_metrics]
+def weighted_overall_z(player_row, available_metrics: list, df=None, session: str = None):
+    """Mean normalize_score across only the metrics tested. Returns None if no data."""
+    zs = [normalize_score(m, player_row.get(m), df, session) for m in available_metrics]
     zs = [z for z in zs if z is not None]
     return round(np.mean(zs), 1) if zs else None
 
@@ -1433,13 +1425,14 @@ PDF_DEC_MAP = {
     "t20":2,"t30":2,"agility":2,"dribbling":2,"vo2max":2,
 }
 
-# 8-axis individual-metric radar — matches website radar exactly
+# 9-axis individual-metric radar — matches website radar exactly
 PDF_RADAR_AXES = {
     "CMJ":       ["cmj"],
     "DJ RSI":    ["dj_rsi"],
     "t5":        ["t5"],
     "t10":       ["t10"],
     "t20":       ["t20"],
+    "t30":       ["t30"],
     "Agility":   ["agility"],
     "Dribbling": ["dribbling"],
     "VO2max":    ["vo2max"],
@@ -1469,16 +1462,53 @@ def z_to_badge(z):
     return "FOCUS AREA", "#EF4444"
 
 
-def axis_z(metrics_list, player_row):
-    """Mean hist_z for a group of metrics for one player row."""
-    vals = [hist_z(m, player_row.get(m)) for m in metrics_list]
-    vals = [v for v in vals if v is not None]
-    return round(sum(vals) / len(vals), 1) if vals else None
+def player_axis_scores(row, df=None, session: str = None):
+    """Returns {axis_label: score} for the PDF radar using session-relative normalize_score."""
+    result = {}
+    for ax, metrics in PDF_RADAR_AXES.items():
+        vals = [normalize_score(m, row.get(m), df, session) for m in metrics]
+        vals = [v for v in vals if v is not None]
+        result[ax] = round(sum(vals) / len(vals), 1) if vals else None
+    return result
 
 
-def player_axis_scores(row):
-    """Returns dict of {metric_label: z_score} for the 8-axis PDF radar."""
-    return {ax: axis_z(metrics, row) for ax, metrics in PDF_RADAR_AXES.items()}
+def team_axis_scores(df: pd.DataFrame, session: str) -> dict:
+    """Team average axis scores for one session, normalized session-relative."""
+    sess_df = df[df["session"] == session]
+    result = {}
+    for ax, metrics in PDF_RADAR_AXES.items():
+        vals = []
+        for m in metrics:
+            s_vals = pd.to_numeric(sess_df[m], errors="coerce").dropna()
+            if s_vals.empty:
+                continue
+            score = normalize_score(m, float(s_vals.mean()), df, session)
+            if score is not None:
+                vals.append(score)
+        result[ax] = round(sum(vals) / len(vals), 1) if vals else None
+    return result
+
+
+def team_axis_scores_vs_grand(df: pd.DataFrame, session: str) -> dict:
+    """Session team avg normalized vs cross-session grand mean/SD (for per-session team radar)."""
+    sess_df = df[df["session"] == session]
+    result = {}
+    for ax, metrics in PDF_RADAR_AXES.items():
+        vals = []
+        for m in metrics:
+            s_vals = pd.to_numeric(sess_df[m], errors="coerce").dropna()
+            all_vals = pd.to_numeric(df[m], errors="coerce").dropna()
+            if s_vals.empty or len(all_vals) < 3:
+                continue
+            grand_mean = float(all_vals.mean())
+            grand_sd   = float(all_vals.std())
+            if grand_sd == 0:
+                continue
+            sign  = 1 if RAW_METRICS.get(m, {}).get("hib", True) else -1
+            score = round(100 + 10 * sign * (float(s_vals.mean()) - grand_mean) / grand_sd, 1)
+            vals.append(score)
+        result[ax] = round(sum(vals) / len(vals), 1) if vals else None
+    return result
 
 
 def style():
@@ -1565,6 +1595,51 @@ def chart_radar(player_scores: dict, team_scores: dict,
     return buf.read()
 
 
+def chart_team_session_radar_pdf(df: pd.DataFrame, session: str,
+                                  figsize=(4.8, 4.8)) -> bytes:
+    """Radar for one session's team avg vs cross-session grand mean (100 = all-time avg)."""
+    ax_scores = team_axis_scores_vs_grand(df, session)
+    labels  = [ax for ax, v in ax_scores.items() if v is not None]
+    p_vals  = [ax_scores[ax] for ax in labels]
+    ref_vals = [100.0] * len(labels)   # grand mean ring
+
+    if len(labels) < 3:
+        return None
+
+    N = len(labels)
+    angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
+    angles += angles[:1]
+    p_closed   = p_vals   + [p_vals[0]]
+    ref_closed = ref_vals + [ref_vals[0]]
+
+    fig, ax = plt.subplots(figsize=figsize, subplot_kw=dict(polar=True))
+    fig.patch.set_facecolor(MPL_BG)
+    ax.set_facecolor(MPL_BG2)
+
+    ax.plot(angles, ref_closed, "--", lw=1.4, color="#666666", zorder=2, label="Ø Gesamt")
+    ax.fill(angles, ref_closed, alpha=0.08, color="#666666")
+    ax.plot(angles, p_closed, "o-", lw=2.5, color=MPL_Y, zorder=3, markersize=4, label=session)
+    ax.fill(angles, p_closed, alpha=0.22, color=MPL_Y)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(labels, size=7, color="#CCCCCC", fontweight="bold")
+    ax.set_ylim(70, 130)
+    ax.set_yticks([80, 90, 100, 110, 120])
+    ax.set_yticklabels(["80", "90", "100", "110", "120"], size=6, color="#555555")
+    ax.spines["polar"].set_color("#333333")
+    ax.grid(color=MPL_GRID, linewidth=0.7)
+    ax.legend(loc="upper right", bbox_to_anchor=(1.55, 1.18),
+              fontsize=7.5, framealpha=0, labelcolor="white")
+    ax.set_title(f"Team Ø · {session}", color=MPL_Y, size=8.5, pad=20, fontweight="bold")
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=200, bbox_inches="tight",
+                facecolor=MPL_BG, edgecolor="none")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
 def chart_hbar(players: list, values: list, metric_label: str,
                team_avg=None, highlight_idx=None,
                figsize=None, max_n=17, dec=2) -> bytes:
@@ -1626,44 +1701,58 @@ def chart_hbar(players: list, values: list, metric_label: str,
 
 
 def chart_trend(player_name: str, df: pd.DataFrame,
-                metrics=None, figsize=(7.0, 2.6)) -> bytes:
-    """Multi-metric Z-score trend across sessions."""
-    if metrics is None:
-        metrics = ["cmj", "vo2max", "t20", "agility"]
-
+                figsize=(7.2, 4.6)) -> bytes:
+    """Raw-value Leistungsentwicklung across sessions — 2×3 subplot grid."""
     p_df = _sort_by_session(df[df["name"] == player_name])
     sessions = p_df["session"].tolist()
     if len(sessions) < 2:
         return None
 
-    fig, ax = plt.subplots(figsize=figsize)
-    fig.patch.set_facecolor(MPL_BG)
-    ax.set_facecolor(MPL_BG2)
+    metrics_to_plot = [
+        ("cmj",       "CMJ (cm)",         "#FDE000"),
+        ("vo2max",    "VO2max",            "#4ADE80"),
+        ("t20",       "Sprint 20m (s)",    "#60A5FA"),
+        ("t30",       "Sprint 30m (s)",    "#C084FC"),
+        ("agility",   "Agility (s)",       "#FB923C"),
+        ("dribbling", "Dribbling (s)",     "#F472B6"),
+    ]
 
-    palette = [MPL_Y, "#22C55E", "#3B82F6", "#F59E0B",
-               "#EF4444", "#A855F7", "#EC4899", "#14B8A6"]
+    fig, axes = plt.subplots(2, 3, figsize=figsize)
+    fig.patch.set_facecolor(MPL_BG)
+    axes_flat = axes.flatten()
+
     plotted = 0
-    for i, m in enumerate(metrics):
-        zvals = [hist_z(m, row[m]) for _, row in p_df.iterrows()]
-        if all(v is None for v in zvals):
+    for idx, (m, label, color) in enumerate(metrics_to_plot):
+        ax = axes_flat[idx]
+        ax.set_facecolor(MPL_BG2)
+        vals = [(i, float(pd.to_numeric(row[m], errors="coerce")))
+                for i, (_, row) in enumerate(p_df.iterrows())
+                if pd.notna(pd.to_numeric(row[m], errors="coerce"))]
+        if not vals:
+            ax.axis("off")
             continue
-        ax.plot(sessions, [v or np.nan for v in zvals],
-                "o-", lw=2, color=palette[i % len(palette)],
-                label=PDF_METRIC_LABELS.get(m, m), markersize=5)
+        xi, yi = zip(*vals)
+        x_sess = [sessions[i] for i in xi]
+        ax.plot(x_sess, yi, "o-", lw=2, color=color, markersize=5, zorder=3)
+        for xs, yv in zip(x_sess, yi):
+            ax.annotate(f"{yv:.2f}", (xs, yv),
+                        textcoords="offset points", xytext=(0, 6),
+                        ha="center", fontsize=6, color=color, fontweight="bold")
+        ax.set_title(label, color=MPL_Y, size=7.5, fontweight="bold", pad=4)
+        ax.tick_params(colors=MPL_TXT, labelsize=6)
+        ax.set_xticks(range(len(x_sess)))
+        ax.set_xticklabels(x_sess, rotation=20, ha="right", size=6, color=MPL_TXT)
+        for spine in ax.spines.values():
+            spine.set_color("#333333")
+        ax.grid(axis="y", color=MPL_GRID, lw=0.4, alpha=0.6)
         plotted += 1
 
-    ax.axhline(100, color="#444444", lw=1, ls="--", alpha=0.7)
-    ax.set_ylim(70, 130)
-    ax.set_yticks([80, 90, 100, 110, 120])
-    ax.set_yticklabels(["80", "90", "100↑", "110", "120"], size=7, color=MPL_TXT)
-    ax.tick_params(colors=MPL_TXT, labelsize=7.5)
-    for spine in ax.spines.values():
-        spine.set_color("#333333")
-    ax.grid(axis="y", color=MPL_GRID, lw=0.5)
-    if plotted > 0:
-        ax.legend(fontsize=6.5, framealpha=0, labelcolor="white",
-                  loc="upper left", ncol=4)
-    plt.tight_layout(pad=0.4)
+    for idx in range(plotted, 6):
+        axes_flat[idx].axis("off")
+
+    fig.suptitle(f"{player_name} · Leistungsentwicklung",
+                 color=MPL_Y, size=9, fontweight="bold", y=1.01)
+    plt.tight_layout(pad=0.5)
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=190, bbox_inches="tight",
@@ -1681,11 +1770,11 @@ def chart_percentile_bar(player_name: str, df: pd.DataFrame,
         return None
     row = p_row.iloc[0]
 
-    metrics_to_show = ["cmj", "dj_rsi", "t5", "t20", "vo2max"]
+    metrics_to_show = ["cmj", "dj_rsi", "t5", "t10", "t20", "t30", "agility", "dribbling", "vo2max"]
     labels, zscores, bar_colors = [], [], []
 
     for m in metrics_to_show:
-        z = hist_z(m, row.get(m))
+        z = normalize_score(m, row.get(m), df, session)
         if z is None:
             continue
         labels.append(PDF_METRIC_LABELS.get(m, m))
@@ -1925,27 +2014,33 @@ def auto_insights(df: pd.DataFrame, session: str, player: str = None) -> list:
         if row is None:
             return []
         for m, label, _ in METRICS_CHECKED:
-            z = hist_z(m, row.get(m))
+            z = normalize_score(m, row.get(m), df, session)
             if z is None:
                 continue
             badge, _ = z_to_badge(z)
             if z >= 108:
-                insights.append(f"✦ {label}: überdurchschnittlich stark (Z={z:.0f}) — {badge}")
+                insights.append(f"✦ {label}: überdurchschnittlich stark (Score={z:.0f}) — {badge}")
             elif z <= 92:
-                insights.append(f"■ {label}: Entwicklungspotenzial (Z={z:.0f}) — Trainingsempfehlung")
+                insights.append(f"■ {label}: Entwicklungspotenzial (Score={z:.0f}) — Trainingsempfehlung")
     else:
-        # Team insights
+        # Team insights — compare session avg vs cross-session grand mean
         for m, label, hib in METRICS_CHECKED:
             col = pd.to_numeric(sdf[m], errors="coerce").dropna()
             if len(col) == 0:
                 continue
-            team_z = np.mean([hist_z(m, v) for v in col if hist_z(m, v) is not None])
-            if team_z is None:
+            all_col = pd.to_numeric(df[m], errors="coerce").dropna()
+            if len(all_col) < 3:
                 continue
+            grand_mean = float(all_col.mean())
+            grand_sd   = float(all_col.std())
+            if grand_sd == 0:
+                continue
+            sign = 1 if RAW_METRICS.get(m, {}).get("hib", True) else -1
+            team_z = round(100 + 10 * sign * (float(col.mean()) - grand_mean) / grand_sd, 1)
             if team_z >= 105:
-                insights.append(f"✦ {label}: Team liegt über historischem Schnitt (Ø Z={team_z:.0f})")
+                insights.append(f"✦ {label}: Session überdurchschnittlich (Ø Score={team_z:.0f})")
             elif team_z <= 95:
-                insights.append(f"■ {label}: Teamschnitt unter Referenzwert (Ø Z={team_z:.0f}) — Fokus empfohlen")
+                insights.append(f"■ {label}: Session unter Schnitt (Ø Score={team_z:.0f}) — Fokus empfohlen")
 
     return insights[:5]
 
@@ -1969,7 +2064,7 @@ def training_recommendations(player: str, df: pd.DataFrame, session: str) -> lis
         "vo2max":   "Aerobe Basis: Intervalltraining 90–95% HFmax, Tempoläufe",
     }
     for m, rec in metric_focus.items():
-        z = hist_z(m, row.get(m))
+        z = normalize_score(m, row.get(m), df, session)
         if z is not None and z < 95:
             recs.append(f"• {PDF_METRIC_LABELS.get(m, m)}: {rec}")
 
@@ -2213,11 +2308,12 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
     vo2_name,    vo2_val    = best_player("vo2max")
     rsi_name,    rsi_val    = best_player("dj_rsi")
 
-    # Overall team fitness score (mean of all hist_z)
+    # Overall team fitness score (session-relative normalize_score across all players/metrics)
     all_z = []
     for m in ["cmj", "dj_rsi", "t5", "t10", "t20", "t30", "agility", "dribbling", "vo2max"]:
         col = pd.to_numeric(last_df[m], errors="coerce").dropna()
-        all_z += [hist_z(m, v) for v in col if hist_z(m, v) is not None]
+        all_z += [normalize_score(m, v, df, last_sess) for v in col
+                  if normalize_score(m, v, df, last_sess) is not None]
     team_fitness = round(np.mean(all_z), 1) if all_z else 100
     fitness_badge, fitness_color = z_to_badge(team_fitness)
 
