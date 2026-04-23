@@ -54,8 +54,8 @@ RAW_METRICS = {
     "dribbling": {"label": "Dribbling",       "unit": "s",               "hib": False},
     "vo2max":    {"label": "VO2max",          "unit": "ml·kg⁻¹·min⁻¹",  "hib": True},
 }
-RADAR_METRICS = ["cmj", "dj_rsi", "t5", "t10", "t20", "agility", "dribbling", "vo2max"]
-RADAR_LABELS  = ["CMJ", "DJ RSI", "t5", "t10", "t20", "Agility", "Dribbling", "VO2max"]
+RADAR_METRICS = ["cmj", "dj_rsi", "t5", "t10", "t20", "t30", "agility", "dribbling", "vo2max"]
+RADAR_LABELS  = ["CMJ", "DJ RSI", "t5", "t10", "t20", "t30", "Agility", "Dribbling", "VO2max"]
 
 # Historical reference MW/SD seit Jul 2023 (from Zusammenfassung_1_Mannschaft.xlsx)
 # Used for player radar Z-scores — more meaningful than session-relative Z
@@ -624,6 +624,27 @@ def radar_chart(df: pd.DataFrame, names: list, sessions: list = None, title: str
 
     palette = COLORS if len(names) > 1 else ["#FDE000", "#60A5FA", "#4ADE80"]
 
+    # ── Build global fixed axis list shared by all traces ───────────────────────
+    global_metrics, global_labels = [], []
+    for m, l in zip(RADAR_METRICS, RADAR_LABELS):
+        for name in names:
+            for sess in sessions:
+                rec = df[(df["name"] == name) & (df["session"] == sess)]
+                if rec.empty:
+                    continue
+                raw_val = pd.to_numeric(rec.iloc[0].get(m), errors="coerce")
+                if not pd.isna(raw_val) and normalize_score(m, raw_val, df, sess) is not None:
+                    global_metrics.append(m)
+                    global_labels.append(l)
+                    break
+            else:
+                continue
+            break
+
+    if not global_metrics:
+        return fig
+
+    # ── Plot each name × session aligned to global axes ─────────────────────────
     for ni, name in enumerate(names):
         for si, sess in enumerate(sessions):
             rec = df[(df["name"] == name) & (df["session"] == sess)]
@@ -631,31 +652,34 @@ def radar_chart(df: pd.DataFrame, names: list, sessions: list = None, title: str
                 continue
             rec = rec.iloc[0]
 
-            # Build per-axis data — only include axes that have a computable score
-            axis_labels, axis_scores, axis_custom = [], [], []
-            for m, l in zip(RADAR_METRICS, RADAR_LABELS):
+            r_vals, custom_vals = [], []
+            has_any = False
+            for m, l in zip(global_metrics, global_labels):
                 raw_val = pd.to_numeric(rec.get(m), errors="coerce")
                 if pd.isna(raw_val):
+                    r_vals.append(None)
+                    custom_vals.append(["—", "—"])
                     continue
                 score = normalize_score(m, raw_val, df, sess)
                 if score is None:
+                    r_vals.append(None)
+                    custom_vals.append(["—", "—"])
                     continue
                 unit     = RAW_METRICS[m]["unit"]
                 raw_str  = f"{raw_val:.2f} {unit}".strip()
                 t_avg    = team_raw[sess].get(m)
                 team_str = (f"{t_avg:.2f} {unit}".strip()
                             if t_avg is not None and pd.notna(t_avg) else "—")
-                axis_labels.append(l)
-                axis_scores.append(score)
-                axis_custom.append([raw_str, team_str])
+                r_vals.append(score)
+                custom_vals.append([raw_str, team_str])
+                has_any = True
 
-            if not axis_labels:
+            if not has_any:
                 continue
 
-            # Close polygon
-            r_closed      = axis_scores  + [axis_scores[0]]
-            theta_closed  = axis_labels  + [axis_labels[0]]
-            custom_closed = axis_custom  + [axis_custom[0]]
+            r_closed      = r_vals        + [r_vals[0]]
+            theta_closed  = global_labels + [global_labels[0]]
+            custom_closed = custom_vals   + [custom_vals[0]]
 
             color   = palette[ni % len(palette)] if len(names) > 1 else palette[si % len(palette)]
             label   = f"{name} · {sess}" if len(names) > 1 else sess
@@ -670,6 +694,7 @@ def radar_chart(df: pd.DataFrame, names: list, sessions: list = None, title: str
                 opacity=opacity,
                 name=label,
                 customdata=custom_closed,
+                connectgaps=False,
                 hovertemplate=(
                     "<b>%{theta}</b><br>"
                     "Raw: %{customdata[0]}<br>"
@@ -932,42 +957,60 @@ def ranked_bar_chart(df: pd.DataFrame, metric: str, sessions_to_show: list = Non
 def team_radar_chart(df: pd.DataFrame) -> go.Figure:
     """
     Team-average radar: one polygon per session.
-    Uses normalize_score(team_avg) vs historical reference (ALLTIME_MEAN/SD).
-    Only axes with actual session data are plotted — missing metrics are
-    omitted rather than faked at 100 (which would look like 'average' when
-    data simply doesn't exist).
-    Hover: Team avg raw · Score · Historical reference.
+    All sessions share the same fixed global theta list (union of available axes
+    across all sessions, in RADAR_METRICS order) so polygons never cross each other.
+    Sessions missing a metric get r=None at that axis position (gap in line).
     """
     sessions = sorted(df["session"].unique(), key=_session_key)
     fig = go.Figure()
     palette = ["#60A5FA", "#FDE000", "#4ADE80", "#FB923C"]
 
+    # ── Pass 1: build global fixed axis list (any session with data for that metric) ──
+    global_metrics, global_labels = [], []
+    for m, l in zip(RADAR_METRICS, RADAR_LABELS):
+        for sess in sessions:
+            raw_vals = pd.to_numeric(df[df["session"] == sess][m], errors="coerce").dropna()
+            if not raw_vals.empty and normalize_score(m, float(raw_vals.mean())) is not None:
+                global_metrics.append(m)
+                global_labels.append(l)
+                break
+
+    if not global_metrics:
+        return go.Figure()
+
+    # ── Pass 2: plot each session aligned to global axes ──────────────────────────────
     for si, sess in enumerate(sessions):
         sess_df = df[df["session"] == sess]
+        r_vals, custom_vals = [], []
+        has_any = False
 
-        axis_labels, axis_scores, axis_custom = [], [], []
-        for m, l in zip(RADAR_METRICS, RADAR_LABELS):
+        for m, l in zip(global_metrics, global_labels):
             raw_vals = pd.to_numeric(sess_df[m], errors="coerce").dropna()
             if raw_vals.empty:
-                continue                          # no data → omit this axis entirely
-            team_avg = float(raw_vals.mean())
-            score    = normalize_score(m, team_avg)   # vs historical reference
-            if score is None:
+                r_vals.append(None)
+                custom_vals.append(["—", "—"])
                 continue
-            unit      = RAW_METRICS[m]["unit"]
-            raw_str   = f"{team_avg:.2f} {unit}".strip()
-            hist_ref  = HIST_MW.get(m)
-            ref_str   = f"{hist_ref:.2f} {unit}".strip() if hist_ref else "—"
-            axis_labels.append(l)
-            axis_scores.append(score)
-            axis_custom.append([raw_str, ref_str])
+            team_avg = float(raw_vals.mean())
+            score    = normalize_score(m, team_avg)
+            if score is None:
+                r_vals.append(None)
+                custom_vals.append(["—", "—"])
+                continue
+            unit     = RAW_METRICS[m]["unit"]
+            raw_str  = f"{team_avg:.2f} {unit}".strip()
+            hist_ref = HIST_MW.get(m)
+            ref_str  = f"{hist_ref:.2f} {unit}".strip() if hist_ref else "—"
+            r_vals.append(score)
+            custom_vals.append([raw_str, ref_str])
+            has_any = True
 
-        if not axis_labels:
+        if not has_any:
             continue
 
-        r_closed      = axis_scores + [axis_scores[0]]
-        theta_closed  = axis_labels + [axis_labels[0]]
-        custom_closed = axis_custom + [axis_custom[0]]
+        # Close polygon (repeat first point)
+        r_closed      = r_vals      + [r_vals[0]]
+        theta_closed  = global_labels + [global_labels[0]]
+        custom_closed = custom_vals + [custom_vals[0]]
 
         color = palette[si % len(palette)]
         lw    = 2.5 if si == len(sessions) - 1 else 1.5
@@ -980,6 +1023,7 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
             line=dict(color=color, width=lw),
             name=sess,
             customdata=custom_closed,
+            connectgaps=False,
             hovertemplate=(
                 "<b>%{theta}</b><br>"
                 "Team Ø: %{customdata[0]}<br>"
