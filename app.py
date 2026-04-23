@@ -960,10 +960,10 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
         polar=dict(
             bgcolor="#111",
             radialaxis=dict(
-                visible=True, range=[85, 125],
+                visible=True, range=[70, 130],
                 showticklabels=True,
-                tickvals=[90, 100, 110, 120],
-                ticktext=["90", "100", "110", "120"],
+                tickvals=[70, 80, 90, 100, 110, 120, 130],
+                ticktext=["70", "80", "90", "100", "110", "120", "130"],
                 tickfont=dict(size=7, color="#444"),
                 gridcolor="#222", linecolor="#2a2a2a",
             ),
