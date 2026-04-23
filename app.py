@@ -1946,6 +1946,11 @@ def chart_sprint_phase_ranking_pdf(df: pd.DataFrame, session: str,
 
 # ── TEAM PDF ───────────────────────────────────────────────────────────────────
 
+def _safe_col(df_slice, metric: str) -> pd.Series:
+    """Return numeric, NaN-dropped Series for metric. Always safe to call .mean()/.min()/.max() on."""
+    return pd.to_numeric(df_slice[metric], errors="coerce").dropna()
+
+
 def generate_team_pdf(df: pd.DataFrame) -> bytes:
     S = style()
     buf = io.BytesIO()
@@ -1971,9 +1976,11 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
     # Executive summary score cards
     def best_player(metric):
         col = pd.to_numeric(last_df[metric], errors="coerce")
-        idx = col.idxmax() if RAW_METRICS.get(metric, {}).get("hib", True) else col.idxmin()
-        if pd.isna(idx):
+        clean = col.dropna()
+        if clean.empty:
             return "—", None
+        hib = RAW_METRICS.get(metric, {}).get("hib", True)
+        idx = clean.idxmax() if hib else clean.idxmin()
         row = last_df.loc[idx]
         return row["name"].split()[-1], col[idx]
 
@@ -2616,14 +2623,18 @@ with tab_overview:
     for i, (label, value, unit) in enumerate(metrics_kpi):
         with cols[i]:
             delta = None
-            if prev_sess and label != "Spielerinnen":
+            is_float = isinstance(value, float) and not (value != value)  # excludes NaN
+            if prev_sess and label != "Spielerinnen" and is_float:
                 key = {"Ø CMJ": "cmj", "Ø VO2max": "vo2max", "Ø Sprint t20": "t20"}[label]
                 prev_val = df[df["session"] == prev_sess][key].mean()
-                delta_raw = value - prev_val
-                delta = f"{'+' if delta_raw > 0 else ''}{delta_raw:.2f} seit {prev_sess}"
+                if pd.notna(prev_val):
+                    delta_raw = value - prev_val
+                    delta = f"{'+' if delta_raw > 0 else ''}{delta_raw:.2f} seit {prev_sess}"
+            disp = (f"{value:.1f} {unit}".strip() if is_float
+                    else ("—" if isinstance(value, float) else str(value)))
             st.metric(
                 label=label,
-                value=f"{value:.1f} {unit}" if isinstance(value, float) else str(value),
+                value=disp,
                 delta=delta,
                 delta_color="inverse" if label == "Ø Sprint t20" else "normal",
             )
