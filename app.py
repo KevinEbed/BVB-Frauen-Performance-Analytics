@@ -82,6 +82,54 @@ def hist_z(metric: str, value) -> float:
         return None
     return round(100 + 10 * sign * (float(value) - mw) / sd, 1)
 
+
+def normalize_score(metric: str, value,
+                    df: "pd.DataFrame | None" = None,
+                    session: str | None = None) -> float | None:
+    """
+    Universal performance score engine.
+
+    Scale: 100 = average  |  110 = +1 SD above average  |  90 = -1 SD below.
+    Lower-is-better metrics (sprint, agility, dribbling) are automatically
+    inverted so a FASTER athlete always gets a HIGHER score.
+
+    Priority 1 — Historical reference (HIST_MW / HIST_SD): stable cross-session.
+    Priority 2 — Session-relative fallback: used when no historical data exists
+                 (e.g. a new test added in a future session). Requires ≥3 players.
+    Returns None when score cannot be computed (all NA, SD=0, etc.).
+    """
+    if value is None:
+        return None
+    try:
+        fv = float(value)
+    except (ValueError, TypeError):
+        return None
+    if np.isnan(fv):
+        return None
+
+    info = RAW_METRICS.get(metric, {})
+    sign = 1 if info.get("hib", True) else -1
+
+    # Priority 1: historical reference (preferred — comparable across sessions)
+    mw   = HIST_MW.get(metric)
+    sd_h = HIST_SD.get(metric)
+    if mw is not None and sd_h is not None and sd_h > 0:
+        return round(100 + 10 * sign * (fv - mw) / sd_h, 1)
+
+    # Priority 2: session-relative (fallback for future metrics without history)
+    if df is not None and session is not None:
+        sess_vals = pd.to_numeric(
+            df[df["session"] == session][metric], errors="coerce"
+        ).dropna()
+        if len(sess_vals) >= 3:
+            m_val = float(sess_vals.mean())
+            sd_val = float(sess_vals.std())
+            if sd_val > 0:
+                return round(100 + 10 * sign * (fv - m_val) / sd_val, 1)
+
+    return None
+
+
 BVB_YELLOW = "#FDE000"
 COLORS = ["#FDE000", "#60A5FA", "#4ADE80", "#FB923C", "#C084FC", "#F472B6"]
 
@@ -522,49 +570,95 @@ PLOTLY_LAYOUT = dict(
 
 @st.cache_data(show_spinner=False)
 def radar_chart(df: pd.DataFrame, names: list, sessions: list = None, title: str = "") -> go.Figure:
+    """
+    Individual / comparison radar chart.
+    All axes use normalize_score() — 100 = historical average, ±10 per SD.
+    Hover shows: raw value · score · team average (same session).
+    Only axes with actual data are plotted (missing tests are omitted, not faked at 100).
+    """
     fig = go.Figure()
     all_sessions = sorted(df["session"].unique())
     if sessions is None:
         sessions = all_sessions
+
+    # Pre-compute team averages (raw) per session for hover text
+    team_raw: dict[str, dict[str, float]] = {}
+    for sess in sessions:
+        sess_df = df[df["session"] == sess]
+        team_raw[sess] = {
+            m: pd.to_numeric(sess_df[m], errors="coerce").mean()
+            for m in RADAR_METRICS
+        }
+
     palette = COLORS if len(names) > 1 else ["#FDE000", "#60A5FA", "#4ADE80"]
+
     for ni, name in enumerate(names):
         for si, sess in enumerate(sessions):
             rec = df[(df["name"] == name) & (df["session"] == sess)]
             if rec.empty:
                 continue
             rec = rec.iloc[0]
-            # Use historical Z-scores (vs MW seit 2023) — matches Benedikt's Netzdiagramme
-            pairs = [(m, l, hist_z(m, rec.get(m)))
-                     for m, l in zip(RADAR_METRICS, RADAR_LABELS)]
-            pairs = [(m, l, z) for m, l, z in pairs if z is not None]
-            if not pairs:
+
+            # Build per-axis data — only include axes that have a computable score
+            axis_labels, axis_scores, axis_custom = [], [], []
+            for m, l in zip(RADAR_METRICS, RADAR_LABELS):
+                raw_val = pd.to_numeric(rec.get(m), errors="coerce")
+                if pd.isna(raw_val):
+                    continue
+                score = normalize_score(m, raw_val, df, sess)
+                if score is None:
+                    continue
+                unit     = RAW_METRICS[m]["unit"]
+                raw_str  = f"{raw_val:.2f} {unit}".strip()
+                t_avg    = team_raw[sess].get(m)
+                team_str = (f"{t_avg:.2f} {unit}".strip()
+                            if t_avg is not None and pd.notna(t_avg) else "—")
+                axis_labels.append(l)
+                axis_scores.append(score)
+                axis_custom.append([raw_str, team_str])
+
+            if not axis_labels:
                 continue
-            _, labels_used, vals_clean = zip(*pairs)
-            labels_used = list(labels_used)
-            vals_clean  = list(vals_clean)
-            color = palette[ni % len(palette)] if len(names) > 1 else palette[si % len(palette)]
-            label = f"{name} · {sess}" if len(names) > 1 else sess
+
+            # Close polygon
+            r_closed      = axis_scores  + [axis_scores[0]]
+            theta_closed  = axis_labels  + [axis_labels[0]]
+            custom_closed = axis_custom  + [axis_custom[0]]
+
+            color   = palette[ni % len(palette)] if len(names) > 1 else palette[si % len(palette)]
+            label   = f"{name} · {sess}" if len(names) > 1 else sess
             opacity = 1.0 if si == len(sessions) - 1 else 0.5
+
             fig.add_trace(go.Scatterpolar(
-                r=vals_clean + [vals_clean[0]],
-                theta=labels_used + [labels_used[0]],
+                r=r_closed,
+                theta=theta_closed,
                 fill="toself",
                 fillcolor=hex_rgba(color, 0.1),
                 line=dict(color=color, width=2.5 if opacity == 1.0 else 1.5),
                 opacity=opacity,
                 name=label,
-                hovertemplate="%{theta}: Z=%{r:.1f}<extra>" + label + "</extra>",
+                customdata=custom_closed,
+                hovertemplate=(
+                    "<b>%{theta}</b><br>"
+                    "Raw: %{customdata[0]}<br>"
+                    "Score: <b>%{r:.1f}</b><br>"
+                    "Team Ø: %{customdata[1]}"
+                    "<extra>" + label + "</extra>"
+                ),
             ))
+
     fig.update_layout(
         **PLOTLY_LAYOUT,
         title=dict(text=title, font_color="#FDE000", font_size=14),
         polar=dict(
             bgcolor="#111",
-            radialaxis=dict(visible=True, range=[70, 135], showticklabels=True,
-                            tickvals=[80, 90, 100, 110, 120],
-                            ticktext=["80", "90", "100", "110", "120"],
-                            tickfont=dict(size=8, color="#444"),
-                            gridcolor="#1e1e1e", linecolor="#2a2a2a"),
+            radialaxis=dict(
+                visible=True, range=[70, 135], showticklabels=True,
+                tickvals=[80, 90, 100, 110, 120],
+                ticktext=["80", "90", "100", "110", "120"],
+                tickfont=dict(size=8, color="#444"),
+                gridcolor="#1e1e1e", linecolor="#2a2a2a",
+            ),
             angularaxis=dict(gridcolor="#1e1e1e", linecolor="#2a2a2a",
                              tickfont=dict(color="#666", size=11)),
         ),
@@ -802,37 +896,63 @@ def ranked_bar_chart(df: pd.DataFrame, metric: str, sessions_to_show: list = Non
 
 @st.cache_data(show_spinner=False)
 def team_radar_chart(df: pd.DataFrame) -> go.Figure:
+    """
+    Team-average radar: one polygon per session.
+    Uses normalize_score(team_avg) vs historical reference (ALLTIME_MEAN/SD).
+    Only axes with actual session data are plotted — missing metrics are
+    omitted rather than faked at 100 (which would look like 'average' when
+    data simply doesn't exist).
+    Hover: Team avg raw · Score · Historical reference.
+    """
     sessions = sorted(df["session"].unique())
     fig = go.Figure()
     palette = ["#60A5FA", "#FDE000", "#4ADE80", "#FB923C"]
 
     for si, sess in enumerate(sessions):
-        # Use crossNorm so sessions are visually distinguishable.
-        # Direct Z-score averages are always ~100 (by definition of Z),
-        # which makes every session draw the same circle.
-        vals = [team_radar_z(df, m, sessions)[si] for m in RADAR_METRICS]
-        # Build hover showing actual raw team averages
         sess_df = df[df["session"] == sess]
-        hover_vals = []
-        for m in RADAR_METRICS:
-            raw_avg = pd.to_numeric(sess_df[m], errors="coerce").mean() if m in sess_df.columns else None
-            unit = RAW_METRICS[m]["unit"]
-            hover_vals.append(
-                f"{RAW_METRICS[m]['label']}: {raw_avg:.2f} {unit}"
-                if raw_avg is not None and pd.notna(raw_avg) else
-                f"{RAW_METRICS[m]['label']}: —"
-            )
+
+        axis_labels, axis_scores, axis_custom = [], [], []
+        for m, l in zip(RADAR_METRICS, RADAR_LABELS):
+            raw_vals = pd.to_numeric(sess_df[m], errors="coerce").dropna()
+            if raw_vals.empty:
+                continue                          # no data → omit this axis entirely
+            team_avg = float(raw_vals.mean())
+            score    = normalize_score(m, team_avg)   # vs historical reference
+            if score is None:
+                continue
+            unit      = RAW_METRICS[m]["unit"]
+            raw_str   = f"{team_avg:.2f} {unit}".strip()
+            hist_ref  = HIST_MW.get(m)
+            ref_str   = f"{hist_ref:.2f} {unit}".strip() if hist_ref else "—"
+            axis_labels.append(l)
+            axis_scores.append(score)
+            axis_custom.append([raw_str, ref_str])
+
+        if not axis_labels:
+            continue
+
+        r_closed      = axis_scores + [axis_scores[0]]
+        theta_closed  = axis_labels + [axis_labels[0]]
+        custom_closed = axis_custom + [axis_custom[0]]
+
         color = palette[si % len(palette)]
-        lw = 2.5 if si == len(sessions) - 1 else 1.5
+        lw    = 2.5 if si == len(sessions) - 1 else 1.5
+
         fig.add_trace(go.Scatterpolar(
-            r=vals + [vals[0]],
-            theta=RADAR_LABELS + [RADAR_LABELS[0]],
+            r=r_closed,
+            theta=theta_closed,
             fill="toself",
             fillcolor=hex_rgba(color, 0.12 if si == len(sessions)-1 else 0.06),
             line=dict(color=color, width=lw),
             name=sess,
-            customdata=(hover_vals + [hover_vals[0]]),
-            hovertemplate="%{customdata}<extra>" + sess + "</extra>",
+            customdata=custom_closed,
+            hovertemplate=(
+                "<b>%{theta}</b><br>"
+                "Team Ø: %{customdata[0]}<br>"
+                "Score: <b>%{r:.1f}</b><br>"
+                "Hist. Ref: %{customdata[1]}"
+                "<extra>" + sess + "</extra>"
+            ),
         ))
 
     fig.update_layout(
@@ -841,7 +961,10 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
             bgcolor="#111",
             radialaxis=dict(
                 visible=True, range=[85, 125],
-                showticklabels=False,
+                showticklabels=True,
+                tickvals=[90, 100, 110, 120],
+                ticktext=["90", "100", "110", "120"],
+                tickfont=dict(size=7, color="#444"),
                 gridcolor="#222", linecolor="#2a2a2a",
             ),
             angularaxis=dict(
@@ -850,7 +973,7 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
             ),
         ),
         legend=dict(font_color="#666", bgcolor="rgba(0,0,0,0)"),
-        height=350,
+        height=380,
         title=dict(
             text="Team Durchschnitt · Leistungsvergleich",
             font_color="#FDE000", font_size=13,
@@ -2808,7 +2931,45 @@ with tab_player:
                 avail_icons.append(f"**{RAW_METRICS[m]['label']}** {icon}")
             st.caption("Tests in dieser Session:  " + "  ·  ".join(avail_icons))
 
+            # ── Overall Performance Score ────────────────────────────────────
             st.divider()
+            _score_vals = {}
+            for _m in RADAR_METRICS:
+                _rv = pd.to_numeric(rec.get(_m), errors="coerce")
+                if pd.notna(_rv):
+                    _s = normalize_score(_m, _rv)
+                    if _s is not None:
+                        _score_vals[_m] = _s
+            if _score_vals:
+                _overall = round(np.mean(list(_score_vals.values())), 1)
+                _badge, _bc = z_to_badge(_overall)
+                _score_cols = st.columns(len(_score_vals) + 1)
+                with _score_cols[0]:
+                    st.markdown(
+                        f"<div style='background:{_bc}22;border:1px solid {_bc}55;"
+                        f"border-radius:8px;padding:8px 12px;text-align:center'>"
+                        f"<div style='font-size:10px;color:#888;text-transform:uppercase;"
+                        f"letter-spacing:1px'>OVERALL</div>"
+                        f"<div style='font-size:22px;font-weight:700;color:{_bc}'>{_overall:.0f}</div>"
+                        f"<div style='font-size:10px;color:{_bc}'>{_badge}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                for _ci, (_m, _s) in enumerate(sorted(_score_vals.items(),
+                                                       key=lambda x: -x[1])):
+                    _b, _bc2 = z_to_badge(_s)
+                    with _score_cols[_ci + 1]:
+                        st.markdown(
+                            f"<div style='background:#111;border:1px solid #222;"
+                            f"border-radius:8px;padding:6px 10px;text-align:center'>"
+                            f"<div style='font-size:9px;color:#666;text-transform:uppercase'>"
+                            f"{RAW_METRICS[_m]['label']}</div>"
+                            f"<div style='font-size:16px;font-weight:700;color:{_bc2}'>{_s:.0f}</div>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                st.markdown("")
+
             c1, c2 = st.columns(2)
             with c1:
                 player_sessions = sorted(df[df["name"] == selected_player]["session"].unique())
@@ -2870,8 +3031,7 @@ with tab_player:
 
             c3, c4 = st.columns(2)
             with c3:
-                st.markdown("#### Rohdaten")
-                hist = df[df["name"] == selected_player].sort_values("session")
+                st.markdown("#### Rohdaten + Score")
                 raw_rows = []
                 for metric, info in RAW_METRICS.items():
                     row = {"Metrik": info["label"], "Einheit": info["unit"]}
@@ -2880,6 +3040,9 @@ with tab_player:
                         row[s] = round(r.iloc[0][metric], 3) if not r.empty and pd.notna(r.iloc[0].get(metric)) else None
                     ta = df[df["session"] == last_sess][metric].mean()
                     row["Team Ø"] = round(ta, 3) if pd.notna(ta) else None
+                    # Score vs historical reference for the selected session's value
+                    _rv = row.get(selected_session)
+                    row["Score"] = normalize_score(metric, _rv) if _rv is not None else None
                     raw_rows.append(row)
                 raw_df = pd.DataFrame(raw_rows).set_index("Metrik")
                 st.dataframe(raw_df, use_container_width=True)
