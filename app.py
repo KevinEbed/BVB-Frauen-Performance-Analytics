@@ -172,6 +172,11 @@ def _session_key(s: str):
     return (9999, 0)
 
 
+def _sort_by_session(df: pd.DataFrame) -> pd.DataFrame:
+    """Sort a DataFrame by session label chronologically using _session_key."""
+    return df.iloc[df["session"].map(_session_key).argsort()].reset_index(drop=True)
+
+
 def team_radar_z(df: pd.DataFrame, metric: str, sessions: list) -> list:
     """
     Compute Z-scores for each session's team average relative to the
@@ -444,7 +449,7 @@ def compute_injury_flags(df: pd.DataFrame, threshold: float = 8.0):
 
 @st.cache_data(show_spinner=False)
 def predict_next(df: pd.DataFrame, name: str) -> dict:
-    hist = df[df["name"] == name].sort_values("session")
+    hist = _sort_by_session(df[df["name"] == name])
     if len(hist) < 2:
         return {}
     preds = {}
@@ -1626,7 +1631,7 @@ def chart_trend(player_name: str, df: pd.DataFrame,
     if metrics is None:
         metrics = ["cmj", "vo2max", "t20", "agility"]
 
-    p_df = df[df["name"] == player_name].sort_values("session")
+    p_df = _sort_by_session(df[df["name"] == player_name])
     sessions = p_df["session"].tolist()
     if len(sessions) < 2:
         return None
@@ -1798,36 +1803,54 @@ def score_card_table(cards: list) -> Table:
     """
     Render a row of premium metric cards matching website style.
     cards = list of (label, value, badge_text, badge_color)
+    Uses nested Table per card so spacing between label / value / badge is reliable.
     """
-    S = style()
-    CARD_W = W_BODY / len(cards)
-    cells = []
-    for label, value, badge, badge_color in cards:
-        # Value colour: use badge colour; grey "AVERAGE" cards get dark value text
-        val_color = badge_color if badge_color not in ("#888888", "#555555") else "#0A0A0A"
-        cell_content = [
-            Paragraph(f'<font size="6.5" color="#888888">{label}</font>', S["caption"]),
-            Spacer(1, 5),
-            Paragraph(f'<b><font size="18" color="{val_color}">{value}</font></b>',
-                      S["caption"]),
-            Spacer(1, 4),
-            Paragraph(f'<font size="6.5" color="{badge_color}"><b>{badge}</b></font>',
-                      S["caption"]),
-        ]
-        cells.append(cell_content)
+    lbl_style = ParagraphStyle("sc_lbl", fontName="Helvetica",
+        fontSize=6.5, textColor=colors.HexColor("#888888"),
+        leading=9, alignment=TA_CENTER)
+    val_style = ParagraphStyle("sc_val", fontName="Helvetica-Bold",
+        fontSize=17, leading=22, alignment=TA_CENTER)
+    badge_style = ParagraphStyle("sc_badge", fontName="Helvetica-Bold",
+        fontSize=6.5, leading=9, alignment=TA_CENTER)
 
-    t = Table([cells], colWidths=[CARD_W] * len(cards))
-    cmds = [
+    CARD_W = W_BODY / len(cards)
+    outer_cells = []
+
+    for label, value, badge, badge_color in cards:
+        val_color = badge_color if badge_color not in ("#888888", "#555555") else "#222222"
+        inner = Table(
+            [
+                [Paragraph(label, lbl_style)],
+                [Paragraph(f'<font color="{val_color}">{value}</font>', val_style)],
+                [Paragraph(f'<font color="{badge_color}">{badge}</font>', badge_style)],
+            ],
+            colWidths=[CARD_W - 8],
+        )
+        inner.setStyle(TableStyle([
+            ("ALIGN",        (0, 0), (-1, -1), "CENTER"),
+            ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING",   (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING",(0, 0), (-1, -1), 3),
+            ("LEFTPADDING",  (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            # Row heights: label / value / badge
+            ("ROWBACKGROUNDS", (0, 0), (-1, -1), [colors.HexColor("#F5F5F5")]),
+        ]))
+        outer_cells.append(inner)
+
+    t = Table([outer_cells], colWidths=[CARD_W] * len(cards))
+    t.setStyle(TableStyle([
         ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN",        (0, 0), (-1, -1), "CENTER"),
-        ("TOPPADDING",   (0, 0), (-1, -1), 10),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 10),
+        ("TOPPADDING",   (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING",(0, 0), (-1, -1), 8),
+        ("LEFTPADDING",  (0, 0), (-1, -1), 2),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
         ("BACKGROUND",   (0, 0), (-1, -1), colors.HexColor("#F5F5F5")),
         ("BOX",          (0, 0), (-1, -1), 0.5, colors.HexColor("#DDDDDD")),
         ("LINEAFTER",    (0, 0), (-2, -1), 0.5, colors.HexColor("#DDDDDD")),
         ("LINEBELOW",    (0, 0), (-1, -1), 2.5, BVB_Y),
-    ]
-    t.setStyle(TableStyle(cmds))
+    ]))
     return t
 
 
@@ -2192,7 +2215,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
 
     # Overall team fitness score (mean of all hist_z)
     all_z = []
-    for m in ["cmj", "dj_rsi", "t5", "t20", "agility", "dribbling", "vo2max"]:
+    for m in ["cmj", "dj_rsi", "t5", "t10", "t20", "t30", "agility", "dribbling", "vo2max"]:
         col = pd.to_numeric(last_df[m], errors="coerce").dropna()
         all_z += [hist_z(m, v) for v in col if hist_z(m, v) is not None]
     team_fitness = round(np.mean(all_z), 1) if all_z else 100
@@ -2365,7 +2388,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
     # Team axis scores for comparison in player cards
     all_players_sorted = sorted(df["name"].unique())
     for player in all_players_sorted:
-        p_df = df[df["name"] == player].sort_values("session")
+        p_df = _sort_by_session(df[df["name"] == player])
         if p_df.empty:
             continue
         p_sessions = p_df["session"].tolist()
@@ -2484,7 +2507,7 @@ def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
     ALL_SESSIONS = sorted(df["session"].unique().tolist(), key=_session_key)
     last_sess = ALL_SESSIONS[-1]
 
-    p_df = df[df["name"] == player].sort_values("session")
+    p_df = _sort_by_session(df[df["name"] == player])
     if p_df.empty:
         buf.write(b"No data")
         return buf.getvalue()
@@ -3510,7 +3533,7 @@ with tab_squad:
     squad_rows = []
     for name in players:
         p_sessions = db.get_player_sessions(name)
-        last_rec = df[(df["name"] == name)].sort_values("session").iloc[-1] if not df[df["name"]==name].empty else None
+        last_rec = _sort_by_session(df[df["name"] == name]).iloc[-1] if not df[df["name"]==name].empty else None
         squad_rows.append({
             "Spielerin":    name,
             "Sessions":     len(p_sessions),
