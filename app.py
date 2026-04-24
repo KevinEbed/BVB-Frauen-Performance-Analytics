@@ -1597,35 +1597,47 @@ def chart_radar(player_scores: dict, team_scores: dict,
 
 def chart_team_session_radar_pdf(df: pd.DataFrame, session: str,
                                   figsize=(4.8, 4.8)) -> bytes:
-    """Radar for one session's team avg vs cross-session grand mean (100 = all-time avg)."""
-    ax_scores = team_axis_scores_vs_grand(df, session)
-    labels  = [ax for ax, v in ax_scores.items() if v is not None]
-    p_vals  = [ax_scores[ax] for ax in labels]
-    ref_vals = [100.0] * len(labels)   # grand mean ring
+    """Radar for one session's team avg vs ALLTIME_MEAN baseline (same scoring as web radar)."""
+    global_metrics, global_labels = [], []
+    for m, l in zip(RADAR_METRICS, RADAR_LABELS):
+        if ALLTIME_MEAN.get(m) is None:
+            continue
+        raw_vals = pd.to_numeric(df[df["session"] == session][m], errors="coerce").dropna()
+        if not raw_vals.empty:
+            global_metrics.append(m)
+            global_labels.append(l)
 
-    if len(labels) < 3:
+    if len(global_metrics) < 3:
         return None
 
-    N = len(labels)
+    r_vals = []
+    for m in global_metrics:
+        raw_vals = pd.to_numeric(df[df["session"] == session][m], errors="coerce").dropna()
+        info  = RAW_METRICS.get(m, {})
+        sign  = 1 if info.get("hib", True) else -1
+        score = round(100 + 10 * sign * (float(raw_vals.mean()) - ALLTIME_MEAN[m]) / ALLTIME_SD[m], 1)
+        r_vals.append(score)
+
+    N = len(global_metrics)
     angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
-    angles += angles[:1]
-    p_closed   = p_vals   + [p_vals[0]]
-    ref_closed = ref_vals + [ref_vals[0]]
+    angles_closed = angles + angles[:1]
+    r_closed   = r_vals + [r_vals[0]]
+    ref_closed = [100.0] * (N + 1)
 
     fig, ax = plt.subplots(figsize=figsize, subplot_kw=dict(polar=True))
     fig.patch.set_facecolor(MPL_BG)
     ax.set_facecolor(MPL_BG2)
 
-    ax.plot(angles, ref_closed, "--", lw=1.4, color="#666666", zorder=2, label="Ø Gesamt")
-    ax.fill(angles, ref_closed, alpha=0.08, color="#666666")
-    ax.plot(angles, p_closed, "o-", lw=2.5, color=MPL_Y, zorder=3, markersize=4, label=session)
-    ax.fill(angles, p_closed, alpha=0.22, color=MPL_Y)
+    ax.plot(angles_closed, ref_closed, "--", lw=1.4, color="#666666", zorder=2, label="Allzeit-Ø")
+    ax.fill(angles_closed, ref_closed, alpha=0.08, color="#666666")
+    ax.plot(angles_closed, r_closed, "o-", lw=2.5, color=MPL_Y, zorder=3, markersize=4, label=session)
+    ax.fill(angles_closed, r_closed, alpha=0.22, color=MPL_Y)
 
-    ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(labels, size=7, color="#CCCCCC", fontweight="bold")
+    ax.set_xticks(angles)
+    ax.set_xticklabels(global_labels, size=7, color="#CCCCCC", fontweight="bold")
     ax.set_ylim(70, 130)
-    ax.set_yticks([80, 90, 100, 110, 120])
-    ax.set_yticklabels(["80", "90", "100", "110", "120"], size=6, color="#555555")
+    ax.set_yticks([70, 80, 90, 100, 110, 120, 130])
+    ax.set_yticklabels(["70", "80", "90", "100", "110", "120", "130"], size=6, color="#555555")
     ax.spines["polar"].set_color("#333333")
     ax.grid(color=MPL_GRID, linewidth=0.7)
     ax.legend(loc="upper right", bbox_to_anchor=(1.55, 1.18),
@@ -2444,8 +2456,8 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
         if sess_radar_bytes:
             story.append(img_flowable(sess_radar_bytes, width_cm=10))
             story.append(Paragraph(
-                f"Team-Radar {sess}: Score 100 = Durchschnitt über alle Sessions. "
-                "Gelb = diese Session, Grau gestrichelt = Gesamt-Ø.",
+                f"Team-Radar {sess}: Score 100 = BVB Allzeit-Baseline (seit 2023). "
+                "Gelb = diese Session, Grau gestrichelt = Allzeit-Ø.",
                 S["caption"]))
             story.append(Spacer(1, 0.2 * cm))
 
@@ -2665,10 +2677,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
             for rec in recs_p:
                 block.append(Paragraph(rec, S["body"]))
 
-        block.append(Spacer(1, 0.4 * cm))
-        block.append(HRFlowable(width="100%", thickness=0.75,
-                                 color=colors.HexColor("#CCCCCC"),
-                                 spaceAfter=2, spaceBefore=2))
+        block.append(PageBreak())
         story.extend(block)
 
     doc.build(story,
