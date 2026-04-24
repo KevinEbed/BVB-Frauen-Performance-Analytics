@@ -217,16 +217,33 @@ class BVBDatabase:
         # RSI = height(m) / contact_time(s) = (hh_cm/100) / (kz_ms/1000)
         dj_rsi = round((hh / 100) / (kz / 1000), 3) if kz and hh and kz > 0 else None
 
-        def best_time(*vals):
+        def _best_sprint_trial(r1_t5, r1_t10, r1_t20, r1_t30,
+                                r2_t5, r2_t10, r2_t20, r2_t30):
+            r1_ok = r1_t20 is not None and r1_t20 > 0
+            r2_ok = r2_t20 is not None and r2_t20 > 0
+            if r1_ok and r2_ok:
+                if r2_t20 < r1_t20:
+                    return r2_t5, r2_t10, r2_t20, r2_t30
+                return r1_t5, r1_t10, r1_t20, r1_t30
+            elif r2_ok:
+                return r2_t5, r2_t10, r2_t20, r2_t30
+            elif r1_ok:
+                return r1_t5, r1_t10, r1_t20, r1_t30
+            return None, None, None, None
+
+        t5, t10, t20, t30 = _best_sprint_trial(
+            rec.get("sprint_t5_r1"),  rec.get("sprint_t10_r1"),
+            rec.get("sprint_t20_r1"), rec.get("sprint_t30_r1"),
+            rec.get("sprint_t5_r2"),  rec.get("sprint_t10_r2"),
+            rec.get("sprint_t20_r2"), rec.get("sprint_t30_r2"),
+        )
+
+        def _best_time(*vals):
             v = [x for x in vals if x is not None and x > 0]
             return min(v) if v else None
 
-        t5  = best_time(rec.get("sprint_t5_r1"),  rec.get("sprint_t5_r2"))
-        t10 = best_time(rec.get("sprint_t10_r1"), rec.get("sprint_t10_r2"))
-        t20 = best_time(rec.get("sprint_t20_r1"), rec.get("sprint_t20_r2"))
-        t30 = best_time(rec.get("sprint_t30_r1"), rec.get("sprint_t30_r2"))
-        agility   = best_time(rec.get("agility_r1"),   rec.get("agility_r2"))
-        dribbling = best_time(rec.get("dribbling_r1"), rec.get("dribbling_r2"))
+        agility   = _best_time(rec.get("agility_r1"),   rec.get("agility_r2"))
+        dribbling = _best_time(rec.get("dribbling_r1"), rec.get("dribbling_r2"))
 
         # Use pre-computed VO2max from Excel if available (col 23 in Frauen_I)
         # Fall back to formula only if not provided
@@ -428,13 +445,22 @@ class BVBDatabase:
             agility   = val(row.get("agility"))
             dribbling = val(row.get("dribbling"))
             vo2max    = val(row.get("vo2max"))
+            # Raw trial values so recompute_sprint_bests() can work later
+            t5_r1  = val(row.get("t5_r1"))
+            t10_r1 = val(row.get("t10_r1"))
+            t20_r1 = val(row.get("t20_r1"))
+            t30_r1 = val(row.get("t30_r1"))
+            t5_r2  = val(row.get("t5_r2"))
+            t10_r2 = val(row.get("t10_r2"))
+            t20_r2 = val(row.get("t20_r2"))
+            t30_r2 = val(row.get("t30_r2"))
 
             vals = (player_id, sess_id,
-                    None, None, None, None, None,  # cmj_1,2,3, dvj_kontaktzeit, dvj_hoehe
-                    None, None, None, None,         # sprint_t5_r1..t30_r1
-                    None, None, None, None,         # sprint_t5_r2..t30_r2
-                    None, None, None, None, None,   # agility_r1,r2, dribbling_r1,r2, hf_max
-                    None, None,                     # yoyo_level, yoyo_shuttles
+                    None, None, None, None, None,    # cmj_1,2,3, dvj_kontaktzeit, dvj_hoehe
+                    t5_r1, t10_r1, t20_r1, t30_r1,  # sprint_t5_r1..t30_r1
+                    t5_r2, t10_r2, t20_r2, t30_r2,  # sprint_t5_r2..t30_r2
+                    None, None, None, None, None,    # agility_r1,r2, dribbling_r1,r2, hf_max
+                    None, None,                      # yoyo_level, yoyo_shuttles
                     cmj_best, dj_rsi, t5, t10, t20, t30, agility, dribbling, vo2max)
 
             if self.use_postgres:
@@ -449,6 +475,14 @@ class BVBDatabase:
                        cmj_best,dj_rsi,t5,t10,t20,t30,agility,dribbling,vo2max)
                     VALUES ({','.join([ph]*31)})
                     ON CONFLICT(player_id,session_id) DO UPDATE SET
+                      sprint_t5_r1=COALESCE(excluded.sprint_t5_r1, measurements.sprint_t5_r1),
+                      sprint_t10_r1=COALESCE(excluded.sprint_t10_r1, measurements.sprint_t10_r1),
+                      sprint_t20_r1=COALESCE(excluded.sprint_t20_r1, measurements.sprint_t20_r1),
+                      sprint_t30_r1=COALESCE(excluded.sprint_t30_r1, measurements.sprint_t30_r1),
+                      sprint_t5_r2=COALESCE(excluded.sprint_t5_r2, measurements.sprint_t5_r2),
+                      sprint_t10_r2=COALESCE(excluded.sprint_t10_r2, measurements.sprint_t10_r2),
+                      sprint_t20_r2=COALESCE(excluded.sprint_t20_r2, measurements.sprint_t20_r2),
+                      sprint_t30_r2=COALESCE(excluded.sprint_t30_r2, measurements.sprint_t30_r2),
                       cmj_best=excluded.cmj_best, dj_rsi=excluded.dj_rsi,
                       t5=excluded.t5, t10=excluded.t10, t20=excluded.t20, t30=excluded.t30,
                       agility=excluded.agility, dribbling=excluded.dribbling,
@@ -466,12 +500,57 @@ class BVBDatabase:
                        cmj_best,dj_rsi,t5,t10,t20,t30,agility,dribbling,vo2max)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(player_id,session_id) DO UPDATE SET
+                      sprint_t5_r1=COALESCE(excluded.sprint_t5_r1, sprint_t5_r1),
+                      sprint_t10_r1=COALESCE(excluded.sprint_t10_r1, sprint_t10_r1),
+                      sprint_t20_r1=COALESCE(excluded.sprint_t20_r1, sprint_t20_r1),
+                      sprint_t30_r1=COALESCE(excluded.sprint_t30_r1, sprint_t30_r1),
+                      sprint_t5_r2=COALESCE(excluded.sprint_t5_r2, sprint_t5_r2),
+                      sprint_t10_r2=COALESCE(excluded.sprint_t10_r2, sprint_t10_r2),
+                      sprint_t20_r2=COALESCE(excluded.sprint_t20_r2, sprint_t20_r2),
+                      sprint_t30_r2=COALESCE(excluded.sprint_t30_r2, sprint_t30_r2),
                       cmj_best=excluded.cmj_best, dj_rsi=excluded.dj_rsi,
                       t5=excluded.t5, t10=excluded.t10, t20=excluded.t20, t30=excluded.t30,
                       agility=excluded.agility, dribbling=excluded.dribbling,
                       vo2max=excluded.vo2max
                 """, vals)
 
+        conn.commit()
+        conn.close()
+
+    def recompute_sprint_bests(self):
+        """
+        For any measurement row that has raw r1/r2 trial data stored,
+        recompute t5/t10/t20/t30 using best-complete-trial logic (lower t20 wins).
+        Safe to call repeatedly — only touches rows with at least one non-null trial.
+        """
+        conn = self._connect()
+        cur  = conn.cursor()
+        ph   = self._ph()
+        cur.execute("""
+            SELECT id,
+                   sprint_t5_r1, sprint_t10_r1, sprint_t20_r1, sprint_t30_r1,
+                   sprint_t5_r2, sprint_t10_r2, sprint_t20_r2, sprint_t30_r2
+            FROM measurements
+            WHERE sprint_t20_r1 IS NOT NULL OR sprint_t20_r2 IS NOT NULL
+        """)
+        for row in cur.fetchall():
+            mid = row[0]
+            r1 = row[1:5]
+            r2 = row[5:9]
+            r1_ok = r1[2] is not None and r1[2] > 0
+            r2_ok = r2[2] is not None and r2[2] > 0
+            if r1_ok and r2_ok:
+                best = r2 if r2[2] < r1[2] else r1
+            elif r1_ok:
+                best = r1
+            elif r2_ok:
+                best = r2
+            else:
+                continue
+            cur.execute(
+                f"UPDATE measurements SET t5={ph},t10={ph},t20={ph},t30={ph} WHERE id={ph}",
+                (best[0], best[1], best[2], best[3], mid)
+            )
         conn.commit()
         conn.close()
 

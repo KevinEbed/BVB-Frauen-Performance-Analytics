@@ -330,15 +330,12 @@ def parse_excel(file, session_label: str) -> pd.DataFrame:
         if "rsi" in sub or (same_row and "rsi" in group):
             col_map.setdefault("dj_rsi", ci)
 
-        # ── Sprint — first occurrence = round 1, which is what we use ────────
-        if re.match(r'^t5[\s\(\[]|^t5$', sub):
-            col_map.setdefault("t5", ci)
-        if re.match(r'^t10[\s\(\[]|^t10$', sub):
-            col_map.setdefault("t10", ci)
-        if re.match(r'^t20[\s\(\[]|^t20$', sub):
-            col_map.setdefault("t20", ci)
-        if re.match(r'^t30[\s\(\[]|^t30$', sub):
-            col_map.setdefault("t30", ci)
+        # ── Sprint — detect both trials; best complete trial chosen per row ──
+        for _dist in ("t5", "t10", "t20", "t30"):
+            if re.match(rf'^{_dist}(\s*[\(\[]1[\)\]])?$', sub):
+                col_map.setdefault(f"{_dist}_r1", ci)
+            elif re.match(rf'^{_dist}\s*[\(\[]2[\)\]]$', sub):
+                col_map[f"{_dist}_r2"] = ci
 
         # ── Agility ──────────────────────────────────────────────────────────
         # BVB sheet: "Agility Test" group with single "t1" sub-column.
@@ -377,7 +374,10 @@ def parse_excel(file, session_label: str) -> pd.DataFrame:
         "data_start": data_start,
         "name_col": name_col,
         **{k: col_map.get(k, "NOT FOUND")
-           for k in ("cmj","dj_rsi","t5","t10","t20","t30","agility","dribbling","vo2max")},
+           for k in ("cmj","dj_rsi",
+                     "t5_r1","t5_r2","t10_r1","t10_r2",
+                     "t20_r1","t20_r2","t30_r1","t30_r2",
+                     "agility","dribbling","vo2max")},
     }
     st.session_state["_last_parse_debug"] = _parse_debug
 
@@ -398,6 +398,20 @@ def parse_excel(file, session_label: str) -> pd.DataFrame:
         for key in RAW_METRICS:
             if key not in rec:
                 rec[key] = None
+        # Best complete sprint trial — lower t20 = faster = better
+        _r1 = (rec.get("t5_r1"), rec.get("t10_r1"), rec.get("t20_r1"), rec.get("t30_r1"))
+        _r2 = (rec.get("t5_r2"), rec.get("t10_r2"), rec.get("t20_r2"), rec.get("t30_r2"))
+        _r1_ok = _r1[2] is not None and _r1[2] > 0
+        _r2_ok = _r2[2] is not None and _r2[2] > 0
+        if _r1_ok and _r2_ok:
+            _best = _r2 if _r2[2] < _r1[2] else _r1
+        elif _r2_ok:
+            _best = _r2
+        elif _r1_ok:
+            _best = _r1
+        else:
+            _best = (None, None, None, None)
+        rec["t5"], rec["t10"], rec["t20"], rec["t30"] = _best
         if any(rec.get(k) is not None for k in RAW_METRICS):
             records.append(rec)
     return pd.DataFrame(records)
@@ -2951,6 +2965,7 @@ if not sessions:
                             st.caption(f"{'✓' if isinstance(v, int) else '✕'} {k}: {v}")
             else:
                 db.upsert_session_from_df(parsed, new_sess_label.strip())
+                db.recompute_sprint_bests()
                 st.success(f"✓ {len(parsed)} Spielerinnen geladen!")
                 if dbg:
                     with st.expander("🔍 Erkannte Spalten"):
@@ -2984,6 +2999,7 @@ with st.sidebar:
                 st.error("Keine Daten erkannt. Prüfe Spaltenbezeichnungen.")
             else:
                 db.upsert_session_from_df(parsed, new_sess_label.strip())
+                db.recompute_sprint_bests()
                 st.success(f"✓ {len(parsed)} Spielerinnen in DB gespeichert")
                 st.rerun()
 
