@@ -972,9 +972,11 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
     # ── Pass 1: build global fixed axis list (any session with data for that metric) ──
     global_metrics, global_labels = [], []
     for m, l in zip(RADAR_METRICS, RADAR_LABELS):
+        if ALLTIME_MEAN.get(m) is None:
+            continue
         for sess in sessions:
             raw_vals = pd.to_numeric(df[df["session"] == sess][m], errors="coerce").dropna()
-            if not raw_vals.empty and normalize_score(m, float(raw_vals.mean())) is not None:
+            if not raw_vals.empty:
                 global_metrics.append(m)
                 global_labels.append(l)
                 break
@@ -995,15 +997,14 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
                 custom_vals.append(["—", "—"])
                 continue
             team_avg = float(raw_vals.mean())
-            score    = normalize_score(m, team_avg)
-            if score is None:
-                r_vals.append(None)
-                custom_vals.append(["—", "—"])
-                continue
-            unit     = RAW_METRICS[m]["unit"]
-            raw_str  = f"{team_avg:.2f} {unit}".strip()
-            hist_ref = HIST_MW.get(m)
-            ref_str  = f"{hist_ref:.2f} {unit}".strip() if hist_ref else "—"
+            info = RAW_METRICS.get(m, {})
+            sign = 1 if info.get("hib", True) else -1
+            mean = ALLTIME_MEAN[m]
+            sd   = ALLTIME_SD[m]
+            score = round(100 + 10 * sign * (team_avg - mean) / sd, 1)
+            unit    = RAW_METRICS[m]["unit"]
+            raw_str = f"{team_avg:.2f} {unit}".strip()
+            ref_str = f"{mean:.2f} {unit}".strip()
             r_vals.append(score)
             custom_vals.append([raw_str, ref_str])
             has_any = True
@@ -1647,6 +1648,91 @@ def chart_team_session_radar_pdf(df: pd.DataFrame, session: str,
     return buf.read()
 
 
+def chart_team_radar_pdf_multisession(df: pd.DataFrame, figsize=(5.5, 5.5)) -> bytes:
+    """
+    PDF version of the web team radar — all sessions as separate colored polygons,
+    scored against ALLTIME_MEAN/ALLTIME_SD (same logic as team_radar_z).
+    Mirrors the web 'Team Durchschnitt · Leistungsvergleich' chart exactly.
+    """
+    sessions = sorted(df["session"].unique(), key=_session_key)
+    palette  = ["#60A5FA", "#FDE000", "#4ADE80", "#FB923C"]
+
+    # Build global axis list: metrics present in ALLTIME_MEAN with at least one session having data
+    global_metrics, global_labels = [], []
+    for m, l in zip(RADAR_METRICS, RADAR_LABELS):
+        if ALLTIME_MEAN.get(m) is None:
+            continue
+        for sess in sessions:
+            if not pd.to_numeric(df[df["session"] == sess][m], errors="coerce").dropna().empty:
+                global_metrics.append(m)
+                global_labels.append(l)
+                break
+
+    if len(global_metrics) < 3:
+        return None
+
+    N      = len(global_metrics)
+    angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
+    angles_closed = angles + angles[:1]
+
+    fig, ax = plt.subplots(figsize=figsize, subplot_kw=dict(polar=True))
+    fig.patch.set_facecolor(MPL_BG)
+    ax.set_facecolor(MPL_BG2)
+
+    plotted_any = False
+    for si, sess in enumerate(sessions):
+        sess_df = df[df["session"] == sess]
+        r_vals  = []
+        for m in global_metrics:
+            raw_vals = pd.to_numeric(sess_df[m], errors="coerce").dropna()
+            if raw_vals.empty:
+                r_vals.append(None)
+                continue
+            info  = RAW_METRICS.get(m, {})
+            sign  = 1 if info.get("hib", True) else -1
+            score = round(100 + 10 * sign * (float(raw_vals.mean()) - ALLTIME_MEAN[m]) / ALLTIME_SD[m], 1)
+            r_vals.append(score)
+
+        if all(v is None for v in r_vals):
+            continue
+
+        color = palette[si % len(palette)]
+        lw    = 2.5 if si == len(sessions) - 1 else 1.5
+        alpha = 0.22 if si == len(sessions) - 1 else 0.08
+
+        # Close polygon, skip None gaps
+        r_closed = r_vals + [r_vals[0]]
+        # Replace None with 100 for plotting (gap workaround in matplotlib polar)
+        r_plot = [v if v is not None else 100 for v in r_closed]
+
+        ax.plot(angles_closed, r_plot, "o-", lw=lw, color=color, markersize=3, label=sess)
+        ax.fill(angles_closed, r_plot, alpha=alpha, color=color)
+        plotted_any = True
+
+    if not plotted_any:
+        plt.close(fig)
+        return None
+
+    ax.set_xticks(angles)
+    ax.set_xticklabels(global_labels, size=7, color="#CCCCCC", fontweight="bold")
+    ax.set_ylim(70, 130)
+    ax.set_yticks([70, 80, 90, 100, 110, 120, 130])
+    ax.set_yticklabels(["70", "80", "90", "100", "110", "120", "130"], size=6, color="#555555")
+    ax.spines["polar"].set_color("#333333")
+    ax.grid(color=MPL_GRID, linewidth=0.7)
+    ax.legend(loc="upper right", bbox_to_anchor=(1.62, 1.20),
+              fontsize=7.5, framealpha=0, labelcolor="white")
+    ax.set_title("Team Durchschnitt · Leistungsvergleich",
+                 color=MPL_Y, size=8.5, pad=20, fontweight="bold")
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=200, bbox_inches="tight",
+                facecolor=MPL_BG, edgecolor="none")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
 def chart_hbar(players: list, values: list, metric_label: str,
                team_avg=None, highlight_idx=None,
                figsize=None, max_n=17, dec=2) -> bytes:
@@ -2078,24 +2164,21 @@ def auto_insights(df: pd.DataFrame, session: str, player: str = None) -> list:
             elif z <= 92:
                 insights.append(f"■ {label}: Entwicklungspotenzial (Score={z:.0f}) — Trainingsempfehlung")
     else:
-        # Team insights — compare session avg vs cross-session grand mean
+        # Team insights — compare session avg vs BVB alltime baseline
         for m, label, hib in METRICS_CHECKED:
             col = pd.to_numeric(sdf[m], errors="coerce").dropna()
             if len(col) == 0:
                 continue
-            all_col = pd.to_numeric(df[m], errors="coerce").dropna()
-            if len(all_col) < 3:
+            mean = ALLTIME_MEAN.get(m)
+            sd   = ALLTIME_SD.get(m)
+            if mean is None or sd is None or sd == 0:
                 continue
-            grand_mean = float(all_col.mean())
-            grand_sd   = float(all_col.std())
-            if grand_sd == 0:
-                continue
-            sign = 1 if RAW_METRICS.get(m, {}).get("hib", True) else -1
-            team_z = round(100 + 10 * sign * (float(col.mean()) - grand_mean) / grand_sd, 1)
-            if team_z >= 105:
-                insights.append(f"✦ {label}: Session überdurchschnittlich (Ø Score={team_z:.0f})")
-            elif team_z <= 95:
-                insights.append(f"■ {label}: Session unter Schnitt (Ø Score={team_z:.0f}) — Fokus empfohlen")
+            sign   = 1 if RAW_METRICS.get(m, {}).get("hib", True) else -1
+            team_z = round(100 + 10 * sign * (float(col.mean()) - mean) / sd, 1)
+            if team_z >= 103:
+                insights.append(f"✦ {label}: Session über Allzeit-Schnitt (Ø Score={team_z:.0f})")
+            elif team_z <= 97:
+                insights.append(f"■ {label}: Session unter Allzeit-Schnitt (Ø Score={team_z:.0f}) — Fokus empfohlen")
 
     return insights[:5]
 
@@ -2384,17 +2467,12 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
     # ── PAGE 2: OVERALL TEAM RADAR + INSIGHTS ────────────────────────────
     rl_section(story, "Squad Benchmark Summary", S)
 
-    # Overall team axis scores for latest session (session-relative)
-    team_axis = team_axis_scores(df, last_sess)
-    # Reference ring: grand cross-session mean = 100 for all axes
-    ref_axis   = {ax: 100 for ax in team_axis if team_axis[ax] is not None}
-
-    radar_bytes = chart_radar(team_axis, ref_axis,
-                              title=f"Team Ø · {last_sess} vs Gesamt-Schnitt")
-    story.append(img_flowable(radar_bytes, width_cm=12))
-    story.append(Paragraph(
-        "Radar zeigt session-relative Scores (100 = Teamdurchschnitt dieser Session). "
-        "Grauer Ring = Referenz (100).", S["caption"]))
+    radar_bytes = chart_team_radar_pdf_multisession(df)
+    if radar_bytes:
+        story.append(img_flowable(radar_bytes, width_cm=13))
+        story.append(Paragraph(
+            "Radar zeigt alle Sessions vs. BVB Allzeit-Baseline (100 = historischer Durchschnitt seit 2023). "
+            "Jede Farbe = eine Session.", S["caption"]))
     story.append(Spacer(1, 0.3 * cm))
 
     # Team insights
@@ -2647,7 +2725,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
         block.append(HRFlowable(width="100%", thickness=0.75,
                                  color=colors.HexColor("#CCCCCC"),
                                  spaceAfter=2, spaceBefore=2))
-        story.append(KeepTogether(block))
+        story.extend(block)
 
     doc.build(story,
               onFirstPage=make_footer_canvas(last_sess),
