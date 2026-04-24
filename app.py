@@ -2567,6 +2567,35 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
     sprint_ranking_bytes = chart_sprint_phase_ranking_pdf(df, last_sess)
     if sprint_ranking_bytes:
         story.append(img_flowable(sprint_ranking_bytes, 17))
+    story.append(Spacer(1, 0.25 * cm))
+
+    # Sprint phase split times table
+    last_sess_df = df[df["session"] == last_sess]
+    phase_cols = [("0–5m", "t5", None), ("5–10m", "t10", "t5"),
+                  ("10–20m", "t20", "t10"), ("20–30m", "t30", "t20")]
+    ph_hrow = [Paragraph(h, S["th"]) for h in
+               ["Spielerin", "0–5m [s]", "5–10m [s]", "10–20m [s]", "20–30m [s]"]]
+    ph_rows = [ph_hrow]
+    player_phase_data = []
+    for _, row in last_sess_df.iterrows():
+        splits = []
+        for _, end_col, start_col in phase_cols:
+            ev = pd.to_numeric(row.get(end_col), errors="coerce")
+            sv = pd.to_numeric(row.get(start_col), errors="coerce") if start_col else 0.0
+            if pd.notna(ev) and (not start_col or pd.notna(sv)):
+                splits.append(round(float(ev) - (float(sv) if pd.notna(sv) else 0.0), 3))
+            else:
+                splits.append(None)
+        t20 = pd.to_numeric(row.get("t20"), errors="coerce")
+        if any(s is not None for s in splits):
+            player_phase_data.append((row["name"], splits, float(t20) if pd.notna(t20) else 999))
+    player_phase_data.sort(key=lambda x: x[2])
+    for name, splits, _ in player_phase_data:
+        ph_rows.append([Paragraph(name, S["body"])] +
+                       [Paragraph(f"{s:.3f}" if s is not None else "—", S["body"])
+                        for s in splits])
+    ph_col_w = [4.5*cm, 3.0*cm, 3.0*cm, 3.0*cm, 3.0*cm]
+    story.append(styled_table(ph_rows, ph_col_w))
     story.append(Spacer(1, 0.3 * cm))
 
     # ── PAGE 4: INDIVIDUAL CARDS ────────────────────────────────────────────
