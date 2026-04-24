@@ -403,17 +403,9 @@ def parse_excel(file, session_label: str) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-_GHOST_PLAYER_NAMES = {
-    "spieler", "nachname", "vorname", "name", "mw", "sd",
-    "mittelwert", "mean", "avg", "gesamt", "total",
-}
-
 def get_df() -> pd.DataFrame:
     """Always loads fresh from DB and recomputes Z-scores."""
     raw = st.session_state.db.load_dataframe()
-    if not raw.empty:
-        raw = raw[~raw["name"].str.strip().str.lower().isin(_GHOST_PLAYER_NAMES)]
-        raw = raw.reset_index(drop=True)
     return compute_z_scores(raw)
 
 
@@ -1390,7 +1382,7 @@ from reportlab.lib import colors
 from reportlab.lib.units import cm
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-    HRFlowable, PageBreak, Image, KeepTogether, Flowable
+    HRFlowable, PageBreak, Image, KeepTogether
 )
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
@@ -1401,7 +1393,7 @@ BVB_Y   = colors.HexColor("#FDE000")
 BVB_BK  = colors.HexColor("#0A0A0A")
 BVB_DG  = colors.HexColor("#1A1A1A")
 DGRAY   = colors.HexColor("#2D2D2D")
-MGRAY   = colors.HexColor("#999999")
+MGRAY   = colors.HexColor("#555555")
 LGRAY   = colors.HexColor("#F0F0F0")
 WHITE   = colors.white
 GREEN   = colors.HexColor("#22C55E")
@@ -1531,14 +1523,14 @@ def style():
         "section": ParagraphStyle("sec", fontName="Helvetica-Bold",
             fontSize=12, textColor=BVB_Y, leading=16, spaceBefore=12, spaceAfter=2),
         "sub": ParagraphStyle("sub", fontName="Helvetica-Bold",
-            fontSize=9.5, textColor=BVB_Y, leading=13,
+            fontSize=9.5, textColor=colors.HexColor("#1A1A1A"), leading=13,
             spaceBefore=8, spaceAfter=3),
         "body": ParagraphStyle("body", fontName="Helvetica",
-            fontSize=8.5, textColor=colors.HexColor("#CCCCCC"), leading=12.5),
+            fontSize=8.5, textColor=colors.HexColor("#2A2A2A"), leading=12.5),
         "small": ParagraphStyle("sm", fontName="Helvetica",
             fontSize=7.5, textColor=MGRAY, leading=10.5),
         "insight": ParagraphStyle("ins", fontName="Helvetica-Oblique",
-            fontSize=8.5, textColor=colors.HexColor("#BBBBBB"), leading=12.5),
+            fontSize=8.5, textColor=colors.HexColor("#1A1A1A"), leading=12.5),
         "caption": ParagraphStyle("cap", fontName="Helvetica",
             fontSize=7, textColor=MGRAY, leading=9, alignment=TA_CENTER),
         "th": ParagraphStyle("th", fontName="Helvetica-Bold",
@@ -1576,9 +1568,9 @@ def chart_radar(player_scores: dict, team_scores: dict,
 
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(labels, size=7, color="#CCCCCC", fontweight="bold")
-    ax.set_ylim(82, 118)
-    ax.set_yticks([85, 92, 100, 108, 115])
-    ax.set_yticklabels(["85", "92", "100", "108", "115"],
+    ax.set_ylim(70, 130)
+    ax.set_yticks([80, 90, 100, 110, 120])
+    ax.set_yticklabels(["80", "90", "100", "110", "120"],
                        size=6, color="#555555")
     ax.spines["polar"].set_color("#333333")
     ax.grid(color=MPL_GRID, linewidth=0.7)
@@ -1630,9 +1622,9 @@ def chart_team_session_radar_pdf(df: pd.DataFrame, session: str,
 
     ax.set_xticks(angles[:-1])
     ax.set_xticklabels(labels, size=7, color="#CCCCCC", fontweight="bold")
-    ax.set_ylim(82, 118)
-    ax.set_yticks([85, 92, 100, 108, 115])
-    ax.set_yticklabels(["85", "92", "100", "108", "115"], size=6, color="#555555")
+    ax.set_ylim(70, 130)
+    ax.set_yticks([80, 90, 100, 110, 120])
+    ax.set_yticklabels(["80", "90", "100", "110", "120"], size=6, color="#555555")
     ax.spines["polar"].set_color("#333333")
     ax.grid(color=MPL_GRID, linewidth=0.7)
     ax.legend(loc="upper right", bbox_to_anchor=(1.55, 1.18),
@@ -1874,37 +1866,33 @@ def styled_table(rows, col_widths, header_rows=1, zebra=True,
         ("TOPPADDING",   (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING",(0, 0), (-1, -1), 4),
         ("LINEBELOW",    (0, header_rows - 1), (-1, header_rows - 1), 1.5, BVB_Y),
-        ("GRID",         (0, header_rows), (-1, -1), 0.25, colors.HexColor("#2A2A2A")),
-        ("BOX",          (0, 0), (-1, -1), 0.5, colors.HexColor("#2A2A2A")),
+        ("GRID",         (0, header_rows), (-1, -1), 0.25, colors.HexColor("#E8E8E8")),
+        ("BOX",          (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
     ]
     if zebra:
         for i in range(header_rows, len(rows)):
-            bg = colors.HexColor("#1C1C1C") if i % 2 == 0 else colors.HexColor("#141414")
+            bg = WHITE if i % 2 == 0 else colors.HexColor("#F9F9F9")
             cmds.append(("BACKGROUND", (0, i), (-1, i), bg))
-            cmds.append(("TEXTCOLOR",  (0, i), (-1, i), colors.HexColor("#DDDDDD")))
     if best_row is not None:
         cmds.append(("BACKGROUND", (0, best_row), (-1, best_row),
-                     colors.HexColor("#052e16")))
+                     colors.HexColor("#DCFCE7")))
         cmds.append(("TEXTCOLOR",  (0, best_row), (-1, best_row),
-                     colors.HexColor("#4ADE80")))
+                     colors.HexColor("#166534")))
     if worst_row is not None:
         cmds.append(("BACKGROUND", (0, worst_row), (-1, worst_row),
-                     colors.HexColor("#3b0000")))
+                     colors.HexColor("#FEE2E2")))
         cmds.append(("TEXTCOLOR",  (0, worst_row), (-1, worst_row),
-                     colors.HexColor("#F87171")))
+                     colors.HexColor("#991B1B")))
     t.setStyle(TableStyle(cmds))
     return t
 
 
 def score_card_table(cards: list) -> Table:
     """
-    Render a row of premium metric cards — BVB dark theme.
+    Render a row of premium metric cards matching website style.
     cards = list of (label, value, badge_text, badge_color)
     Uses nested Table per card so spacing between label / value / badge is reliable.
     """
-    CARD_BG = colors.HexColor("#111111")
-    DIVIDER = colors.HexColor("#2A2A2A")
-
     lbl_style = ParagraphStyle("sc_lbl", fontName="Helvetica",
         fontSize=6.5, textColor=colors.HexColor("#888888"),
         leading=9, alignment=TA_CENTER)
@@ -1917,7 +1905,7 @@ def score_card_table(cards: list) -> Table:
     outer_cells = []
 
     for label, value, badge, badge_color in cards:
-        val_color = badge_color if badge_color not in ("#888888", "#555555") else "#CCCCCC"
+        val_color = badge_color if badge_color not in ("#888888", "#555555") else "#222222"
         inner = Table(
             [
                 [Paragraph(label, lbl_style)],
@@ -1933,7 +1921,8 @@ def score_card_table(cards: list) -> Table:
             ("BOTTOMPADDING",(0, 0), (-1, -1), 3),
             ("LEFTPADDING",  (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("ROWBACKGROUNDS", (0, 0), (-1, -1), [CARD_BG]),
+            # Row heights: label / value / badge
+            ("ROWBACKGROUNDS", (0, 0), (-1, -1), [colors.HexColor("#F5F5F5")]),
         ]))
         outer_cells.append(inner)
 
@@ -1945,80 +1934,35 @@ def score_card_table(cards: list) -> Table:
         ("BOTTOMPADDING",(0, 0), (-1, -1), 8),
         ("LEFTPADDING",  (0, 0), (-1, -1), 2),
         ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-        ("BACKGROUND",   (0, 0), (-1, -1), CARD_BG),
-        ("BOX",          (0, 0), (-1, -1), 0.5, DIVIDER),
-        ("LINEAFTER",    (0, 0), (-2, -1), 0.5, DIVIDER),
+        ("BACKGROUND",   (0, 0), (-1, -1), colors.HexColor("#F5F5F5")),
+        ("BOX",          (0, 0), (-1, -1), 0.5, colors.HexColor("#DDDDDD")),
+        ("LINEAFTER",    (0, 0), (-2, -1), 0.5, colors.HexColor("#DDDDDD")),
         ("LINEBELOW",    (0, 0), (-1, -1), 2.5, BVB_Y),
     ]))
     return t
-
-
-def _bvb_logo_flowable(size_cm: float = 1.8):
-    """Draw a BVB circular emblem using ReportLab canvas primitives."""
-
-    class BVBLogo(Flowable):
-        def __init__(self, size):
-            Flowable.__init__(self)
-            self.size = size
-            self.width = size
-            self.height = size
-
-        def draw(self):
-            c = self.canv
-            cx, cy = self.size / 2, self.size / 2
-            r = self.size / 2
-            c.setFillColor(colors.HexColor("#FDE000"))
-            c.circle(cx, cy, r, fill=1, stroke=0)
-            c.setFillColor(colors.HexColor("#0A0A0A"))
-            c.circle(cx, cy, r * 0.78, fill=1, stroke=0)
-            c.setFillColor(colors.HexColor("#FDE000"))
-            c.setFont("Helvetica-Bold", self.size * 0.30)
-            c.drawCentredString(cx, cy + self.size * 0.06, "BVB")
-            c.setFont("Helvetica-Bold", self.size * 0.16)
-            c.drawCentredString(cx, cy - self.size * 0.20, "09")
-
-    return BVBLogo(size_cm * cm)
 
 
 def cover_page_elements(title: str, subtitle: str,
                         session: str, n_players: int, S: dict) -> list:
     elems = []
 
-    # Logo + header band side by side
+    # Premium header band — dark background with BVB branding text
     brand_style = ParagraphStyle("brand", fontName="Helvetica-Bold",
-        fontSize=13, textColor=BVB_Y, leading=18, alignment=TA_LEFT)
+        fontSize=11, textColor=BVB_Y, leading=16, alignment=TA_CENTER)
     dept_style  = ParagraphStyle("dept",  fontName="Helvetica",
-        fontSize=8,  textColor=colors.HexColor("#888888"), leading=12, alignment=TA_LEFT)
-    tagline_style = ParagraphStyle("tagline", fontName="Helvetica-Bold",
-        fontSize=7, textColor=colors.HexColor("#555555"), leading=10, alignment=TA_LEFT)
-
-    logo_size = 1.8 * cm
-    text_col = Table(
-        [[Paragraph("BVB FRAUEN", brand_style)],
-         [Paragraph("Performance Diagnostics", dept_style)],
-         [Paragraph("Sports Science Department", tagline_style)]],
-        colWidths=[W_BODY - logo_size - 0.5 * cm],
-    )
-    text_col.setStyle(TableStyle([
-        ("BACKGROUND",    (0, 0), (-1, -1), BVB_BK),
-        ("TOPPADDING",    (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 12),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
-        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
-    ]))
+        fontSize=8,  textColor=colors.HexColor("#888888"), leading=12, alignment=TA_CENTER)
 
     header_inner = Table(
-        [[_bvb_logo_flowable(1.8), text_col]],
-        colWidths=[logo_size + 0.5 * cm, W_BODY - logo_size - 0.5 * cm],
+        [[Paragraph("BVB FRAUEN", brand_style)],
+         [Paragraph("Performance Diagnostics · Sports Science Department", dept_style)]],
+        colWidths=[W_BODY],
     )
     header_inner.setStyle(TableStyle([
         ("BACKGROUND",    (0, 0), (-1, -1), BVB_BK),
-        ("TOPPADDING",    (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+        ("TOPPADDING",    (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
         ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
-        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
         ("LINEABOVE",     (0, 0), (-1, 0),  4, BVB_Y),
         ("LINEBELOW",     (0, -1),(-1, -1), 1, colors.HexColor("#333333")),
     ]))
