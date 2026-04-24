@@ -2329,12 +2329,12 @@ def chart_sprint_phase_ranking_pdf(df: pd.DataFrame, session: str,
         if not rows:
             ax.axis("off")
             continue
-        rows.sort(key=lambda x: x[1])  # fastest first
+        rows.sort(key=lambda x: x[1], reverse=True)  # slowest first → at bottom
         names  = [r[0] for r in rows]
         splits = [r[1] for r in rows]
         n = len(rows)
-        clrs = (["#22C55E"] + [MPL_DARK] * max(0, n - 2) +
-                (["#EF4444"] if n > 1 else []))
+        clrs = (["#EF4444"] + [MPL_DARK] * max(0, n - 2) +
+                (["#22C55E"] if n > 1 else []))
         ax.barh(names, splits, color=clrs, height=0.65, edgecolor="none")
         avg = np.mean(splits)
         ax.axvline(avg, color=MPL_Y, lw=1, ls="--", alpha=0.8)
