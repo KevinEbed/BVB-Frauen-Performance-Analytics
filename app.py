@@ -61,9 +61,20 @@ _LOGO_WORDMARK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 # ─────────────────────────────────────────────
 # PAGE CONFIG
 # ─────────────────────────────────────────────
+def _page_icon():
+    """Use BVB Frauen logo as favicon if available, else fall back to emoji."""
+    _icon_path = os.path.join(_APP_DIR, _D, "BVB_Frauen_vertikal_RGB.png")
+    if os.path.isfile(_icon_path):
+        try:
+            from PIL import Image as _PIL_Image
+            return _PIL_Image.open(_icon_path)
+        except Exception:
+            pass
+    return "⚽"
+
 st.set_page_config(
     page_title="BVB Frauen · Performance Analytics",
-    page_icon="🟡",
+    page_icon=_page_icon(),
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -98,10 +109,35 @@ _BVB_CSS = f"""
     padding-right: 2.5rem !important;
 }}
 
-/* ── BASE TEXT — only body-level, never override Streamlit internals broadly ─ */
-body, p, span, div {{
+/* ── BASE TEXT ────────────────────────────────────────────────────────────── */
+body, p, li {{
     font-family: 'BVBClassic', 'Inter', -apple-system, sans-serif;
     font-size: 13px;
+}}
+
+/* ── HEADING SIZES — scoped to main content only ─────────────────────────── */
+[data-testid="stMarkdownContainer"] h1 {{
+    font-size: 1.35rem !important; font-weight: 700 !important;
+    color: #ffd900 !important; letter-spacing: -0.2px !important;
+    margin: 0 0 6px 0 !important; line-height: 1.3 !important;
+}}
+[data-testid="stMarkdownContainer"] h2 {{
+    font-size: 1.1rem !important; font-weight: 600 !important;
+    color: #ffd900 !important; margin: 0 0 4px 0 !important;
+    line-height: 1.3 !important;
+}}
+[data-testid="stMarkdownContainer"] h3 {{
+    font-size: 0.95rem !important; font-weight: 600 !important;
+    color: #e8e8e8 !important; margin: 0 0 4px 0 !important;
+    line-height: 1.3 !important;
+}}
+[data-testid="stMarkdownContainer"] h4 {{
+    font-size: 0.85rem !important; font-weight: 500 !important;
+    color: #bbb !important; margin: 0 0 2px 0 !important;
+}}
+/* Headings that ARE section labels should stay yellow */
+[data-testid="stMarkdownContainer"] h3.section-label {{
+    color: #ffd900 !important;
 }}
 
 /* ── SIDEBAR ──────────────────────────────────────────────────────────────── */
@@ -110,17 +146,26 @@ body, p, span, div {{
     border-right: 1px solid #161616 !important;
 }}
 
-/* Sidebar all text small and muted */
+/* Sidebar — hard cap on all text */
 [data-testid="stSidebar"] * {{
     font-size: 12px !important;
+    font-weight: 400 !important;
+    line-height: 1.4 !important;
 }}
 [data-testid="stSidebar"] label,
 [data-testid="stSidebar"] .stMarkdown p,
 [data-testid="stSidebar"] small,
-[data-testid="stSidebar"] span {{
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] p {{
     color: #666 !important;
     font-size: 11px !important;
     font-weight: 400 !important;
+}}
+/* File uploader in sidebar — override the size cap */
+[data-testid="stSidebar"] [data-testid="stFileUploader"] *,
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzoneInstructions"] * {{
+    font-size: 10px !important;
+    color: #3a3a3a !important;
 }}
 /* Sidebar inputs */
 [data-testid="stSidebar"] input {{
@@ -137,35 +182,37 @@ body, p, span, div {{
     font-size: 12px !important;
 }}
 
-/* ── TABS — clean, visible, not too bold ──────────────────────────────────── */
+/* ── TABS ─────────────────────────────────────────────────────────────────── */
 .stTabs [data-baseweb="tab-list"] {{
-    background: transparent;
-    border-bottom: 1px solid #1e1e1e;
-    gap: 2px;
-    padding: 0;
+    background: transparent !important;
+    border-bottom: 1px solid #252525 !important;
+    gap: 0 !important;
+    padding: 0 !important;
 }}
 .stTabs [data-baseweb="tab"] {{
-    color: #4a4a4a !important;
+    color: #888 !important;
     font-family: 'BVBClassic', 'Inter', sans-serif !important;
     font-size: 12px !important;
     font-weight: 400 !important;
-    letter-spacing: 0.3px !important;
+    letter-spacing: 0.2px !important;
     text-transform: none !important;
-    padding: 8px 16px !important;
+    padding: 9px 18px !important;
     border-radius: 0 !important;
     border-bottom: 2px solid transparent !important;
     background: transparent !important;
+    transition: color 0.12s !important;
 }}
 .stTabs [aria-selected="true"] {{
     color: #ffd900 !important;
     border-bottom: 2px solid #ffd900 !important;
     font-weight: 600 !important;
+    background: transparent !important;
 }}
 .stTabs [data-baseweb="tab"]:hover:not([aria-selected="true"]) {{
-    color: #999 !important;
+    color: #ccc !important;
     background: #0d0d0d !important;
 }}
-[data-testid="stTabsContent"] {{ padding-top: 1.2rem; }}
+[data-testid="stTabsContent"] {{ padding-top: 1rem !important; }}
 
 /* ── BUTTONS ──────────────────────────────────────────────────────────────── */
 .stButton > button {{
@@ -239,34 +286,63 @@ div[data-testid="metric-container"] {{
 }}
 .stTextInput label {{ color: #555 !important; font-size: 11px !important; }}
 
-/* ── SELECTBOX ────────────────────────────────────────────────────────────── */
-[data-baseweb="select"] div {{
+/* ── SELECTBOX / MULTISELECT ──────────────────────────────────────────────── */
+[data-baseweb="select"] > div,
+[data-baseweb="select"] [data-baseweb="select-control"],
+[data-baseweb="select"] [class*="valueContainer"],
+[data-baseweb="select"] [class*="container"] {{
     background: #0f0f0f !important;
     border-color: #222 !important;
     color: #e0e0e0 !important;
-    font-size: 13px !important;
-}}
-.stSelectbox label {{ color: #555 !important; font-size: 11px !important; }}
-
-/* ── FILE UPLOADER — keep it small and muted ─────────────────────────────── */
-[data-testid="stFileUploader"] {{
-    background: #0a0a0a !important;
+    font-size: 12px !important;
     border-radius: 4px !important;
 }}
-[data-testid="stFileUploader"] section {{
-    border: 1px dashed #222 !important;
-    border-radius: 4px !important;
-    padding: 8px 12px !important;
+/* Dropdown list popup */
+[data-baseweb="popover"] [data-baseweb="menu"] {{
+    background: #111 !important;
+    border: 1px solid #222 !important;
 }}
-[data-testid="stFileUploader"] span,
-[data-testid="stFileUploader"] small,
-[data-testid="stFileUploader"] p {{
+[data-baseweb="popover"] [role="option"] {{
+    background: #111 !important;
+    color: #ccc !important;
+    font-size: 12px !important;
+}}
+[data-baseweb="popover"] [role="option"]:hover,
+[data-baseweb="popover"] [aria-selected="true"] {{
+    background: #1e1e1e !important;
+    color: #ffd900 !important;
+}}
+/* Tags/chips inside multiselect */
+[data-baseweb="tag"] {{
+    background: #1a1a1a !important;
+    border-color: #2a2a2a !important;
+    color: #ccc !important;
     font-size: 11px !important;
-    color: #444 !important;
 }}
+.stSelectbox label,
+.stMultiSelect label {{
+    color: #555 !important;
+    font-size: 11px !important;
+    font-weight: 400 !important;
+}}
+
+/* ── FILE UPLOADER ────────────────────────────────────────────────────────── */
+[data-testid="stFileUploader"] {{ border-radius: 4px !important; }}
+[data-testid="stFileUploader"] > section,
+[data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"] {{
+    border: 1px dashed #252525 !important;
+    border-radius: 4px !important;
+    padding: 6px 10px !important;
+    background: #0a0a0a !important;
+}}
+/* All text inside uploader — cap at 11px */
+[data-testid="stFileUploader"] *,
+[data-testid="stFileUploaderDropzoneInstructions"] *,
 [data-testid="stFileUploaderDropzoneInstructions"] span {{
     font-size: 11px !important;
     font-weight: 400 !important;
+    color: #444 !important;
+    line-height: 1.4 !important;
 }}
 
 /* ── DATAFRAMES ───────────────────────────────────────────────────────────── */
@@ -1134,11 +1210,13 @@ def comparison_bar(df: pd.DataFrame, name: str, session: str) -> go.Figure:
     fig.update_layout(
         **PLOTLY_LAYOUT,
         barmode="overlay",
-        xaxis=dict(range=[70, 140], title="Z-Score (MW=100)", tickfont=dict(color="#555")),
-        yaxis=dict(tickfont=dict(color="#888")),
-        legend=dict(font_color="#666", bgcolor="rgba(0,0,0,0)"),
-        height=320,
-        title=dict(text=f"Vergleich mit Team Ø · {session}", font_color="#ffd900", font_size=13),
+        xaxis=dict(range=[70, 140], title="Z-Score (MW=100)",
+                   tickfont=dict(color="#555", size=10), title_font=dict(size=11)),
+        yaxis=dict(tickfont=dict(color="#aaa", size=11)),
+        legend=dict(font=dict(color="#666", size=10), bgcolor="rgba(0,0,0,0)"),
+        margin=dict(l=130, r=20, t=40, b=20),
+        height=300,
+        title=dict(text=f"Vergleich mit Team Ø · {session}", font=dict(color="#ffd900", size=12)),
     )
     return fig
 
