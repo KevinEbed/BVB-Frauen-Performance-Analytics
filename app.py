@@ -71,7 +71,7 @@ st.set_page_config(
 # ── BVB PREMIUM THEME ─────────────────────────────────────────────────────────
 _BVB_CSS = f"""
 <style>
-/* ── BRAND FONTS ─────────────────────────────────────── */
+/* ── BRAND FONTS ──────────────────────────────────────────────────────────── */
 @font-face {{
     font-family: 'BVBIntensity';
     src: url('{_FONT_INTENSITY}') format('woff2');
@@ -87,266 +87,217 @@ _BVB_CSS = f"""
     src: url('{_FONT_COPY}') format('woff2');
     font-weight: 700; font-style: normal;
 }}
-@font-face {{
-    font-family: 'BVBCopyReg';
-    src: url('{_FONT_COPY_REG}') format('woff2');
-    font-weight: 400; font-style: normal;
-}}
 
-/* ── BASE ────────────────────────────────────────────── */
-html, body, [class*="css"] {{
-    font-family: 'BVBClassic', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-}}
-
-/* ── APP SHELL ───────────────────────────────────────── */
+/* ── APP SHELL ────────────────────────────────────────────────────────────── */
 .stApp {{ background-color: #050505; }}
 .stMain .block-container {{
-    padding-top: 1.5rem !important;
+    padding-top: 1rem !important;
     padding-bottom: 2rem !important;
-    max-width: 1400px !important;
-    padding-left: 2rem !important;
-    padding-right: 2rem !important;
+    max-width: 1380px !important;
+    padding-left: 2.5rem !important;
+    padding-right: 2.5rem !important;
 }}
 
-/* ── SIDEBAR ─────────────────────────────────────────── */
+/* ── BASE TEXT — only body-level, never override Streamlit internals broadly ─ */
+body, p, span, div {{
+    font-family: 'BVBClassic', 'Inter', -apple-system, sans-serif;
+    font-size: 13px;
+}}
+
+/* ── SIDEBAR ──────────────────────────────────────────────────────────────── */
 [data-testid="stSidebar"] {{
-    background: #080808 !important;
-    border-right: 1px solid #1a1a1a !important;
-}}
-[data-testid="stSidebarContent"] {{
-    padding: 0 !important;
-}}
-[data-testid="stSidebarContent"] > div:first-child {{
-    padding: 0 1rem 1rem 1rem;
+    background: #060606 !important;
+    border-right: 1px solid #161616 !important;
 }}
 
-/* ── HEADINGS ────────────────────────────────────────── */
-h1, h2, h3 {{
-    font-family: 'BVBIntensity', 'Inter', sans-serif !important;
-    color: #ffd900 !important;
-    letter-spacing: 0.5px;
+/* Sidebar all text small and muted */
+[data-testid="stSidebar"] * {{
+    font-size: 12px !important;
 }}
-h4, h5, h6 {{
-    font-family: 'BVBClassic', 'Inter', sans-serif !important;
-    color: #e0e0e0 !important;
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stMarkdown p,
+[data-testid="stSidebar"] small,
+[data-testid="stSidebar"] span {{
+    color: #666 !important;
+    font-size: 11px !important;
+    font-weight: 400 !important;
+}}
+/* Sidebar inputs */
+[data-testid="stSidebar"] input {{
+    background: #0f0f0f !important;
+    color: #ccc !important;
+    border: 1px solid #222 !important;
+    font-size: 12px !important;
+    border-radius: 3px !important;
+}}
+/* Sidebar selectbox */
+[data-testid="stSidebar"] [data-baseweb="select"] {{
+    background: #0f0f0f !important;
+    border-color: #222 !important;
+    font-size: 12px !important;
 }}
 
-/* ── TABS ────────────────────────────────────────────── */
+/* ── TABS — clean, visible, not too bold ──────────────────────────────────── */
 .stTabs [data-baseweb="tab-list"] {{
-    background: #0a0a0a;
+    background: transparent;
     border-bottom: 1px solid #1e1e1e;
-    gap: 0;
-    padding: 0 4px;
+    gap: 2px;
+    padding: 0;
 }}
 .stTabs [data-baseweb="tab"] {{
-    color: #555 !important;
-    font-family: 'BVBClassic', sans-serif !important;
-    font-size: 11px !important;
-    letter-spacing: 0.6px;
-    text-transform: uppercase;
-    padding: 10px 14px !important;
+    color: #4a4a4a !important;
+    font-family: 'BVBClassic', 'Inter', sans-serif !important;
+    font-size: 12px !important;
+    font-weight: 400 !important;
+    letter-spacing: 0.3px !important;
+    text-transform: none !important;
+    padding: 8px 16px !important;
     border-radius: 0 !important;
     border-bottom: 2px solid transparent !important;
-    transition: color 0.15s;
+    background: transparent !important;
 }}
 .stTabs [aria-selected="true"] {{
     color: #ffd900 !important;
     border-bottom: 2px solid #ffd900 !important;
-    background: transparent !important;
+    font-weight: 600 !important;
 }}
-.stTabs [data-baseweb="tab"]:hover {{
-    color: #bbb !important;
-    background: #111 !important;
+.stTabs [data-baseweb="tab"]:hover:not([aria-selected="true"]) {{
+    color: #999 !important;
+    background: #0d0d0d !important;
 }}
-[data-testid="stTabsContent"] {{
-    padding-top: 1rem;
-}}
+[data-testid="stTabsContent"] {{ padding-top: 1.2rem; }}
 
-/* ── BUTTONS ─────────────────────────────────────────── */
+/* ── BUTTONS ──────────────────────────────────────────────────────────────── */
 .stButton > button {{
     background: #ffd900 !important;
-    color: #000000 !important;
-    font-family: 'BVBIntensity', sans-serif !important;
-    font-weight: 700 !important;
-    letter-spacing: 0.5px !important;
-    text-transform: uppercase !important;
-    border: none !important;
-    border-radius: 3px !important;
-    padding: 0.45rem 1.2rem !important;
-    font-size: 11px !important;
-    transition: background 0.15s, transform 0.1s !important;
-}}
-.stButton > button:hover {{
-    background: #ffc400 !important;
-    transform: translateY(-1px) !important;
-}}
-.stButton > button[kind="primary"] {{
-    background: #ffd900 !important;
     color: #000 !important;
+    font-family: 'BVBClassic', 'Inter', sans-serif !important;
+    font-weight: 600 !important;
+    font-size: 12px !important;
+    letter-spacing: 0.2px !important;
+    text-transform: none !important;
+    border: none !important;
+    border-radius: 4px !important;
+    padding: 0.4rem 1rem !important;
+    transition: background 0.15s !important;
 }}
+.stButton > button:hover {{ background: #ffc400 !important; }}
 .stButton > button[disabled] {{
-    background: #222 !important;
-    color: #555 !important;
-    transform: none !important;
+    background: #1a1a1a !important;
+    color: #444 !important;
 }}
-
-/* ── DOWNLOAD BUTTONS ────────────────────────────────── */
 .stDownloadButton > button {{
-    background: #111 !important;
+    background: transparent !important;
     color: #ffd900 !important;
-    border: 1px solid #ffd900 !important;
-    font-family: 'BVBClassic', sans-serif !important;
-    border-radius: 3px !important;
-    font-size: 11px !important;
+    border: 1px solid #333 !important;
+    font-size: 12px !important;
+    border-radius: 4px !important;
 }}
 .stDownloadButton > button:hover {{
     background: #ffd900 !important;
     color: #000 !important;
+    border-color: #ffd900 !important;
 }}
 
-/* ── METRIC CARDS ────────────────────────────────────── */
+/* ── METRIC CARDS ─────────────────────────────────────────────────────────── */
 div[data-testid="metric-container"] {{
-    background: #111111 !important;
-    border: 1px solid #1e1e1e !important;
+    background: #0e0e0e !important;
+    border: 1px solid #1a1a1a !important;
     border-top: 2px solid #ffd900 !important;
     border-radius: 6px !important;
-    padding: 14px 16px !important;
+    padding: 12px 14px !important;
 }}
 [data-testid="stMetricValue"] {{
     color: #ffd900 !important;
-    font-family: 'BVBCopy', 'JetBrains Mono', monospace !important;
+    font-family: 'BVBCopy', monospace !important;
+    font-size: 1.5rem !important;
     font-weight: 700 !important;
-    font-size: 1.6rem !important;
+    line-height: 1.2 !important;
 }}
 [data-testid="stMetricLabel"] {{
-    color: #666 !important;
-    font-family: 'BVBClassic', sans-serif !important;
-    font-size: 0.7rem !important;
+    color: #555 !important;
+    font-size: 10px !important;
+    font-weight: 400 !important;
+    letter-spacing: 0.5px !important;
     text-transform: uppercase !important;
-    letter-spacing: 0.8px !important;
 }}
 [data-testid="stMetricDelta"] {{
-    font-size: 0.78rem !important;
-    font-family: 'BVBCopyReg', monospace !important;
+    font-size: 11px !important;
 }}
 
-/* ── TEXT INPUTS ─────────────────────────────────────── */
-.stTextInput > div > div > input {{
-    background: #111 !important;
-    color: #f0f0f0 !important;
-    border: 1px solid #2a2a2a !important;
+/* ── TEXT INPUTS ──────────────────────────────────────────────────────────── */
+.stTextInput input {{
+    background: #0f0f0f !important;
+    color: #e0e0e0 !important;
+    border: 1px solid #222 !important;
     border-radius: 4px !important;
-}}
-.stTextInput > div > div > input:focus {{
-    border-color: #ffd900 !important;
-    box-shadow: 0 0 0 1px #ffd900 !important;
-}}
-.stTextInput label {{
-    color: #888 !important;
-    font-size: 11px !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.5px !important;
-}}
-
-/* ── SELECTBOX ───────────────────────────────────────── */
-.stSelectbox > div > div > div {{
-    background: #111 !important;
-    color: #f0f0f0 !important;
-    border: 1px solid #2a2a2a !important;
-}}
-.stSelectbox label {{
-    color: #888 !important;
-    font-size: 11px !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.5px !important;
-}}
-
-/* ── FILE UPLOADER ───────────────────────────────────── */
-[data-testid="stFileUploader"] {{
-    background: #111 !important;
-    border: 1px dashed #2a2a2a !important;
-    border-radius: 6px !important;
-}}
-[data-testid="stFileUploader"]:hover {{
-    border-color: #ffd900 !important;
-}}
-
-/* ── DATAFRAMES ──────────────────────────────────────── */
-.stDataFrame {{
-    border: 1px solid #1e1e1e !important;
-    border-radius: 6px !important;
-    overflow: hidden !important;
-}}
-[data-testid="stDataFrame"] th {{
-    background: #111 !important;
-    color: #ffd900 !important;
-    font-family: 'BVBClassic', sans-serif !important;
-    font-size: 11px !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.5px !important;
-}}
-
-/* ── DIVIDERS ────────────────────────────────────────── */
-hr {{
-    border-color: #1e1e1e !important;
-    margin: 0.6rem 0 !important;
-}}
-
-/* ── EXPANDERS ───────────────────────────────────────── */
-[data-testid="stExpander"] {{
-    background: #0d0d0d !important;
-    border: 1px solid #1e1e1e !important;
-    border-radius: 6px !important;
-}}
-[data-testid="stExpander"] summary {{
-    color: #888 !important;
-    font-size: 12px !important;
-}}
-
-/* ── SPINNERS / STATUS ───────────────────────────────── */
-[data-testid="stSpinner"] {{ color: #ffd900 !important; }}
-
-/* ── SUCCESS / WARNING / ERROR ───────────────────────── */
-[data-testid="stAlert"][data-baseweb="notification"] {{
-    border-radius: 4px !important;
-    border-left: 3px solid !important;
-}}
-
-/* ── PROGRESS BAR ────────────────────────────────────── */
-[data-testid="stProgressBar"] > div > div {{
-    background-color: #ffd900 !important;
-}}
-
-/* ── CAPTIONS / SMALL TEXT ───────────────────────────── */
-[data-testid="stCaptionContainer"] {{
-    color: #555 !important;
-    font-size: 11px !important;
-}}
-
-/* ── SCROLLBAR ───────────────────────────────────────── */
-::-webkit-scrollbar {{ width: 5px; height: 5px; }}
-::-webkit-scrollbar-track {{ background: #050505; }}
-::-webkit-scrollbar-thumb {{ background: #2a2a2a; border-radius: 4px; }}
-::-webkit-scrollbar-thumb:hover {{ background: #ffd900; }}
-
-/* ── SIDEBAR LABELS ──────────────────────────────────── */
-[data-testid="stSidebar"] .stMarkdown p {{
-    color: #888 !important;
-    font-size: 11px !important;
-}}
-[data-testid="stSidebar"] h1,
-[data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3 {{
-    color: #ffd900 !important;
     font-size: 13px !important;
 }}
-
-/* ── PLOTLY CHART CONTAINERS ─────────────────────────── */
-.stPlotlyChart {{
-    background: transparent !important;
-    border-radius: 6px !important;
-    overflow: hidden !important;
+.stTextInput input:focus {{
+    border-color: #ffd900 !important;
+    box-shadow: 0 0 0 1px #ffd90040 !important;
 }}
+.stTextInput label {{ color: #555 !important; font-size: 11px !important; }}
+
+/* ── SELECTBOX ────────────────────────────────────────────────────────────── */
+[data-baseweb="select"] div {{
+    background: #0f0f0f !important;
+    border-color: #222 !important;
+    color: #e0e0e0 !important;
+    font-size: 13px !important;
+}}
+.stSelectbox label {{ color: #555 !important; font-size: 11px !important; }}
+
+/* ── FILE UPLOADER — keep it small and muted ─────────────────────────────── */
+[data-testid="stFileUploader"] {{
+    background: #0a0a0a !important;
+    border-radius: 4px !important;
+}}
+[data-testid="stFileUploader"] section {{
+    border: 1px dashed #222 !important;
+    border-radius: 4px !important;
+    padding: 8px 12px !important;
+}}
+[data-testid="stFileUploader"] span,
+[data-testid="stFileUploader"] small,
+[data-testid="stFileUploader"] p {{
+    font-size: 11px !important;
+    color: #444 !important;
+}}
+[data-testid="stFileUploaderDropzoneInstructions"] span {{
+    font-size: 11px !important;
+    font-weight: 400 !important;
+}}
+
+/* ── DATAFRAMES ───────────────────────────────────────────────────────────── */
+.stDataFrame {{ border: 1px solid #1a1a1a !important; border-radius: 4px !important; }}
+[data-testid="stDataFrame"] th {{
+    background: #0e0e0e !important;
+    color: #ffd900 !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.3px !important;
+}}
+
+/* ── MISC ─────────────────────────────────────────────────────────────────── */
+hr {{ border-color: #161616 !important; margin: 0.5rem 0 !important; }}
+[data-testid="stExpander"] {{
+    background: #0a0a0a !important;
+    border: 1px solid #1a1a1a !important;
+    border-radius: 4px !important;
+}}
+[data-testid="stExpander"] summary {{ color: #555 !important; font-size: 11px !important; }}
+[data-testid="stCaptionContainer"] {{ color: #444 !important; font-size: 11px !important; }}
+[data-testid="stProgressBar"] > div > div {{ background: #ffd900 !important; }}
+
+/* ── SCROLLBAR ────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {{ width: 4px; height: 4px; }}
+::-webkit-scrollbar-track {{ background: #050505; }}
+::-webkit-scrollbar-thumb {{ background: #222; border-radius: 2px; }}
+::-webkit-scrollbar-thumb:hover {{ background: #ffd900; }}
+
+/* ── PLOTLY ───────────────────────────────────────────────────────────────── */
+.stPlotlyChart {{ background: transparent !important; border-radius: 4px !important; }}
 </style>
 """
 st.markdown(_BVB_CSS, unsafe_allow_html=True)
