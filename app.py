@@ -957,10 +957,7 @@ PLOTLY_LAYOUT = dict(
     font_family="'BVBClassic', 'Inter', -apple-system, sans-serif",
     margin=dict(l=20, r=20, t=40, b=20),
     title_font=dict(family="'BVBIntensity', 'Inter', sans-serif", color="#ffd900", size=13),
-    legend=dict(bgcolor="rgba(0,0,0,0)", font_color="#888"),
     hoverlabel=dict(bgcolor="#111", font_color="#f0f0f0", bordercolor="#2a2a2a"),
-    xaxis=dict(gridcolor="#1a1a1a", linecolor="#222", tickcolor="#333"),
-    yaxis=dict(gridcolor="#1a1a1a", linecolor="#222", tickcolor="#333"),
 )
 
 
@@ -2584,43 +2581,78 @@ def training_recommendations(player: str, df: pd.DataFrame, session: str) -> lis
 
 # ── FOOTER CANVAS ──────────────────────────────────────────────────────────────
 
-def make_footer_canvas(session_label: str):
+def make_footer_canvas(session_label: str, report_title: str = ""):
+    """Returns (first_page_fn, later_pages_fn) for doc.build().
+    First page: footer only (cover has its own header).
+    Later pages: footer + slim running header bar.
+    """
     _logo_ok = os.path.isfile(_LOGO_WORDMARK_PATH)
-    def footer(canvas, doc):
+
+    def _draw_footer(canvas, doc):
         canvas.saveState()
         # Black footer band
         canvas.setFillColor(BVB_BK)
         canvas.rect(0, 0, W_PAGE, 1.15 * cm, fill=1, stroke=0)
-        # BVB yellow accent line above footer
+        # Yellow accent stripe above footer
         canvas.setFillColor(BVB_Y)
-        canvas.rect(0, 1.15 * cm, W_PAGE, 0.18 * cm, fill=1, stroke=0)
+        canvas.rect(0, 1.15 * cm, W_PAGE, 0.16 * cm, fill=1, stroke=0)
         # Left: session info
         canvas.setFont("Helvetica", 6.5)
         canvas.setFillColor(colors.HexColor("#888888"))
         canvas.drawString(MARGIN, 0.52 * cm,
             f"BVB Frauen · Sportswissenschaftliche Abteilung · Session: {session_label}")
-        # Left bottom: confidential label
+        # Left lower: confidential label
         canvas.setFont("Helvetica-Bold", 6)
         canvas.setFillColor(colors.HexColor("#cc2200"))
         canvas.drawString(MARGIN, 0.22 * cm, "VERTRAULICH – NUR FÜR INTERNEN GEBRAUCH")
-        # Right: page number + date
+        # Right: page + date
         canvas.setFont("Helvetica-Bold", 7)
         canvas.setFillColor(colors.HexColor("#cccccc"))
-        canvas.drawRightString(
-            W_PAGE - MARGIN, 0.52 * cm,
+        canvas.drawRightString(W_PAGE - MARGIN, 0.52 * cm,
             f"Seite {doc.page}  ·  {datetime.now().strftime('%d.%m.%Y')}")
-        # Right bottom: BVB wordmark logo (if available)
+        # Wordmark logo bottom-right
         if _logo_ok:
             try:
-                _lh = 0.55 * cm
                 canvas.drawImage(_LOGO_WORDMARK_PATH,
-                                  W_PAGE - MARGIN - 1.8 * cm,
-                                  0.18 * cm,
-                                  height=_lh, preserveAspectRatio=True, mask="auto")
+                                  W_PAGE - MARGIN - 2.0 * cm, 0.18 * cm,
+                                  height=0.5 * cm, preserveAspectRatio=True, mask="auto")
             except Exception:
                 pass
         canvas.restoreState()
-    return footer
+
+    def _draw_header(canvas, _doc):
+        """Slim running header on interior pages."""
+        canvas.saveState()
+        _hy = H_PAGE - 0.9 * cm
+        # Yellow top stripe
+        canvas.setFillColor(BVB_Y)
+        canvas.rect(0, H_PAGE - 0.12 * cm, W_PAGE, 0.12 * cm, fill=1, stroke=0)
+        # Dark header band
+        canvas.setFillColor(colors.HexColor("#0a0a0a"))
+        canvas.rect(0, _hy, W_PAGE, 0.78 * cm, fill=1, stroke=0)
+        # Left: "BVB FRAUEN" label
+        canvas.setFont("Helvetica-Bold", 7)
+        canvas.setFillColor(BVB_Y)
+        canvas.drawString(MARGIN, _hy + 0.28 * cm, "BVB FRAUEN")
+        # Middle: report title
+        if report_title:
+            canvas.setFont("Helvetica", 6.5)
+            canvas.setFillColor(colors.HexColor("#666666"))
+            canvas.drawCentredString(W_PAGE / 2, _hy + 0.28 * cm, report_title.upper())
+        # Right: session label
+        canvas.setFont("Helvetica", 6.5)
+        canvas.setFillColor(colors.HexColor("#555555"))
+        canvas.drawRightString(W_PAGE - MARGIN, _hy + 0.28 * cm, session_label)
+        canvas.restoreState()
+
+    def first_page(canvas, doc):
+        _draw_footer(canvas, doc)
+
+    def later_pages(canvas, doc):
+        _draw_header(canvas, doc)
+        _draw_footer(canvas, doc)
+
+    return first_page, later_pages
 
 
 # ── SPRINT PHASE PDF CHARTS ────────────────────────────────────────────────────
@@ -2808,7 +2840,7 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
         leftMargin=MARGIN, rightMargin=MARGIN,
-        topMargin=MARGIN, bottomMargin=1.6 * cm,
+        topMargin=1.8 * cm, bottomMargin=1.6 * cm,
     )
     story = []
 
@@ -3142,9 +3174,8 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
         block.append(PageBreak())
         story.extend(block)
 
-    doc.build(story,
-              onFirstPage=make_footer_canvas(last_sess),
-              onLaterPages=make_footer_canvas(last_sess))
+    _fp, _lp = make_footer_canvas(last_sess, report_title="Mannschaftsbericht")
+    doc.build(story, onFirstPage=_fp, onLaterPages=_lp)
     buf.seek(0)
     return buf.read()
 
@@ -3179,7 +3210,7 @@ def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
         leftMargin=MARGIN, rightMargin=MARGIN,
-        topMargin=MARGIN, bottomMargin=1.6 * cm,
+        topMargin=1.8 * cm, bottomMargin=1.6 * cm,
     )
     story = []
 
@@ -3328,9 +3359,8 @@ def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
 
     # Trainingsempfehlungen temporarily hidden — will be customised per player
 
-    doc.build(story,
-              onFirstPage=make_footer_canvas(last_p_sess),
-              onLaterPages=make_footer_canvas(last_p_sess))
+    _fp, _lp = make_footer_canvas(last_p_sess, report_title=f"Spielerinnen-Report · {player}")
+    doc.build(story, onFirstPage=_fp, onLaterPages=_lp)
     buf.seek(0)
     return buf.read()
 
@@ -3355,39 +3385,72 @@ players   = sorted(df[_any_metric]["name"].unique().tolist())
 last_sess = sessions[-1] if sessions else None
 prev_sess = sessions[-2] if len(sessions) > 1 else None
 
-# ── Empty database guard ─────────────────────────────────────────────
+# ── Empty database guard — branded first-run screen ─────────────────────────
 if not sessions:
-    st.title("🟡 BVB Frauen · Performance Analytics")
-    st.divider()
-    st.info(
-        "**Datenbank ist leer.** Lade deine erste Session hoch um zu starten."
-    )
-    st.markdown("### 📂 Erste Session laden")
-    new_sess_label = st.text_input("Session-Name", placeholder='z.B. "Jan 26"')
-    uploaded_first = st.file_uploader(
-        "Messprotokoll Excel", type=["xlsx", "xls"], key="first_upload"
-    )
-    if st.button("📥 Laden", disabled=not (uploaded_first and new_sess_label.strip())):
-        with st.spinner("Verarbeite..."):
+    # Full-width BVB header
+    _logo_tag = (f'<img src="data:image/png;base64,{_LOGO_FRAUEN_B64}" '
+                 f'style="height:90px;margin-bottom:16px">'
+                 if _LOGO_FRAUEN_B64 else "")
+    st.markdown(f"""
+    <div style="text-align:center;padding:40px 0 20px 0">
+        {_logo_tag}
+        <h1 style="font-family:\'BVBIntensity\',sans-serif;color:#ffd900;
+                   font-size:2rem;letter-spacing:1px;margin:0 0 4px 0">
+            BVB FRAUEN
+        </h1>
+        <p style="color:#555;font-size:12px;letter-spacing:2px;
+                  text-transform:uppercase;margin:0 0 32px 0">
+            Performance Analytics · Sportswissenschaftliche Abteilung
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div style="max-width:480px;margin:0 auto;background:#111;border:1px solid #1e1e1e;
+                border-top:3px solid #ffd900;border-radius:6px;padding:28px 32px 24px 32px">
+    <h3 style="color:#ffd900;font-size:14px;text-transform:uppercase;
+               letter-spacing:1px;margin:0 0 8px 0">Erste Session laden</h3>
+    <p style="color:#666;font-size:12px;margin:0 0 20px 0">
+        Lade ein BVB Frauen Messprotokoll (Excel) hoch um das System zu starten.
+    </p>
+    """, unsafe_allow_html=True)
+
+    _col_a, _col_b = st.columns([1, 1])
+    with _col_a:
+        new_sess_label = st.text_input("Session-Name", placeholder='z.B. "Jan 26"',
+                                        key="first_sess_label")
+    with _col_b:
+        uploaded_first = st.file_uploader("Messprotokoll Excel",
+                                           type=["xlsx", "xls"], key="first_upload",
+                                           label_visibility="visible")
+
+    if st.button("Daten laden", disabled=not (uploaded_first and new_sess_label.strip()),
+                 type="primary", use_container_width=True):
+        with st.spinner("Verarbeite Messprotokoll..."):
             parsed = parse_excel(uploaded_first, new_sess_label.strip())
             dbg = st.session_state.get("_last_parse_debug", {})
             if parsed.empty:
-                st.error("Keine Daten erkannt. Stelle sicher dass die Datei "
-                         "das BVB Frauen Messprotokoll Format hat.")
+                st.error("Keine Daten erkannt — bitte BVB Frauen Messprotokoll-Format prüfen.")
                 if dbg:
-                    with st.expander("🔍 Erkannte Spalten — Debug"):
+                    with st.expander("Spalten-Diagnose"):
                         for k, v in dbg.items():
                             st.caption(f"{'✓' if isinstance(v, int) else '✕'} {k}: {v}")
             else:
                 db.upsert_session_from_df(parsed, new_sess_label.strip())
                 db.recompute_sprint_bests()
-                st.success(f"✓ {len(parsed)} Spielerinnen geladen!")
+                st.success(f"✓ {len(parsed)} Spielerinnen erfolgreich geladen.")
                 if dbg:
-                    with st.expander("🔍 Erkannte Spalten"):
+                    with st.expander("Erkannte Spalten"):
                         for k, v in dbg.items():
                             st.caption(f"{'✓' if isinstance(v, int) else '✕'} {k}: {v}")
                 st.rerun()
-    st.stop()  # Don't render the rest of the app until data exists
+
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown(
+        '<p style="text-align:center;color:#333;font-size:9px;'
+        'letter-spacing:1px;margin-top:24px">VERTRAULICH – NUR FÜR INTERNEN GEBRAUCH</p>',
+        unsafe_allow_html=True)
+    st.stop()
 
 # ─────────────────────────────────────────────
 # SIDEBAR
@@ -3421,14 +3484,26 @@ with st.sidebar:
         unsafe_allow_html=True)
     st.divider()
 
-    st.markdown("**Sessions**")
     for s in sessions:
         _s_any = df[df["session"] == s][list(RAW_METRICS.keys())].notna().any(axis=1)
         n = int(_s_any.sum())
-        st.caption(f"• {s} — {n} Spielerinnen")
+        _is_last = (s == sessions[-1])
+        _dot_col = "#ffd900" if _is_last else "#333"
+        _lbl_col = "#e0e0e0" if _is_last else "#555"
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:8px;'
+            f'padding:4px 0;border-left:2px solid {_dot_col};padding-left:8px;margin:2px 0">'
+            f'<span style="color:{_lbl_col};font-size:11px;font-weight:{"700" if _is_last else "400"}">'
+            f'{s}</span>'
+            f'<span style="color:#333;font-size:10px;margin-left:auto">{n}×</span>'
+            f'</div>',
+            unsafe_allow_html=True)
 
     st.divider()
-    st.markdown("**Neue Session laden**")
+    st.markdown(
+        '<p style="color:#ffd900;font-size:9px;text-transform:uppercase;'
+        'letter-spacing:1px;margin:0 0 8px 0;font-weight:700">Session laden</p>',
+        unsafe_allow_html=True)
     new_sess_label = st.text_input("Session-Name", placeholder='z.B. "Jun 26"')
     uploaded = st.file_uploader("Messprotokoll Excel", type=["xlsx", "xls"])
     if st.button("📥 Laden", disabled=not (uploaded and new_sess_label.strip())):
@@ -3489,22 +3564,39 @@ with st.sidebar:
 # MAIN TABS
 # ─────────────────────────────────────────────
 tab_overview, tab_player, tab_sprint, tab_compare, tab_ranking, tab_saeulen, tab_flags, tab_pdf, tab_squad = st.tabs([
-    "📊 Überblick",
-    "👤 Spielerin",
-    "🏃 Sprint Analyse",
-    "⚡ Vergleich",
-    "🏆 Rankings",
-    "📊 Säulendiagramme",
-    "🚨 Verletzungsrisiko",
-    "📄 PDF Reports",
-    "👥 Spielerinnen",
+    "Überblick",
+    "Spielerin",
+    "Sprint",
+    "Vergleich",
+    "Rankings",
+    "Säulen",
+    "Verletzungsrisiko",
+    "PDF Reports",
+    "Spielerinnen",
 ])
 
 # ══════════════════════════════════════════════
 # ÜBERBLICK
 # ══════════════════════════════════════════════
 with tab_overview:
-    st.markdown(f"### Saison 25/26 · {last_sess}")
+    _wm_tag = (f'<img src="data:image/png;base64,{_LOGO_WORDMARK_B64}" '
+               f'style="height:28px;opacity:0.85">' if _LOGO_WORDMARK_B64 else
+               '<span style="color:#ffd900;font-weight:700;font-size:13px">BVB FRAUEN</span>')
+    st.markdown(f"""
+    <div style="display:flex;align-items:center;justify-content:space-between;
+                border-bottom:2px solid #ffd900;padding-bottom:10px;margin-bottom:18px">
+      <div>
+        <h2 style="margin:0;font-family:\'BVBIntensity\',sans-serif;
+                   color:#ffd900;font-size:1.3rem;letter-spacing:0.5px">
+          Leistungsdiagnostik · Überblick
+        </h2>
+        <p style="margin:2px 0 0 0;color:#444;font-size:11px;letter-spacing:0.5px">
+          Saison 25/26 · Aktuelle Session: <b style="color:#888">{last_sess}</b>
+        </p>
+      </div>
+      {_wm_tag}
+    </div>
+    """, unsafe_allow_html=True)
 
     # KPIs
     cols = st.columns(4)
