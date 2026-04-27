@@ -19,9 +19,11 @@ import base64
 import os
 
 # ── BVB DESIGN ASSETS ─────────────────────────────────────────────────────────
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
 def _asset_b64(rel_path: str, mime: str = "font/woff2") -> str:
-    """Load a design asset as a base64 data URI. Returns '' on failure."""
-    abs_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), rel_path)
+    """Load a design asset as a base64 data URI. Accepts relative or absolute path."""
+    abs_path = rel_path if os.path.isabs(rel_path) else os.path.join(_APP_DIR, rel_path)
     try:
         with open(abs_path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
@@ -31,29 +33,30 @@ def _asset_b64(rel_path: str, mime: str = "font/woff2") -> str:
 
 def _asset_raw_b64(rel_path: str) -> str:
     """Return raw base64 string (no data URI prefix)."""
-    abs_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), rel_path)
+    abs_path = rel_path if os.path.isabs(rel_path) else os.path.join(_APP_DIR, rel_path)
     try:
         with open(abs_path, "rb") as f:
             return base64.b64encode(f.read()).decode()
     except Exception:
         return ""
 
-# Preload brand assets (called once at module level)
-_FONT_INTENSITY = _asset_b64(
-    r"BVB Design\INTENSITY_Web\INTENSITY\BVBIntensity-FunctionalHeadline.woff2")
-_FONT_CLASSIC   = _asset_b64(
-    r"BVB Design\CLASSIC_Web\CLASSIC\BVBClassic-FunctionalHeadline.woff2")
-_FONT_COPY      = _asset_b64(
-    r"BVB Design\COPY_Web\BVB Copy Web Fonts\BVBCopy-Bold.woff2")
-_FONT_COPY_REG  = _asset_b64(
-    r"BVB Design\COPY_Web\BVB Copy Web Fonts\BVBCopy-Regular.woff2")
+# Preload brand assets — use os.path.join() for cross-platform compatibility
+_D = "BVB Design"   # asset root folder (relative to app.py)
+_FONT_INTENSITY = _asset_b64(os.path.join(_D, "INTENSITY_Web", "INTENSITY",
+                                           "BVBIntensity-FunctionalHeadline.woff2"))
+_FONT_CLASSIC   = _asset_b64(os.path.join(_D, "CLASSIC_Web", "CLASSIC",
+                                           "BVBClassic-FunctionalHeadline.woff2"))
+_FONT_COPY      = _asset_b64(os.path.join(_D, "COPY_Web", "BVB Copy Web Fonts",
+                                           "BVBCopy-Bold.woff2"))
+_FONT_COPY_REG  = _asset_b64(os.path.join(_D, "COPY_Web", "BVB Copy Web Fonts",
+                                           "BVBCopy-Regular.woff2"))
 
-_LOGO_FRAUEN_B64    = _asset_raw_b64(r"BVB Design\BVB_Frauen_vertikal_RGB.png")
-_LOGO_WORDMARK_B64  = _asset_raw_b64(r"BVB Design\Wordmark_2zeilig_RGB.png")
+_LOGO_FRAUEN_B64    = _asset_raw_b64(os.path.join(_D, "BVB_Frauen_vertikal_RGB.png"))
+_LOGO_WORDMARK_B64  = _asset_raw_b64(os.path.join(_D, "Wordmark_2zeilig_RGB.png"))
 _LOGO_FRAUEN_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                    r"BVB Design\BVB_Frauen_vertikal_RGB.png")
+                                    _D, "BVB_Frauen_vertikal_RGB.png")
 _LOGO_WORDMARK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                    r"BVB Design\Wordmark_2zeilig_RGB.png")
+                                    _D, "Wordmark_2zeilig_RGB.png")
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
@@ -100,7 +103,9 @@ html, body, [class*="css"] {{
 .stMain .block-container {{
     padding-top: 1.5rem !important;
     padding-bottom: 2rem !important;
-    max-width: 100% !important;
+    max-width: 1400px !important;
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
 }}
 
 /* ── SIDEBAR ─────────────────────────────────────────── */
@@ -956,8 +961,6 @@ PLOTLY_LAYOUT = dict(
     font_color="#888",
     font_family="'BVBClassic', 'Inter', -apple-system, sans-serif",
     margin=dict(l=20, r=20, t=40, b=20),
-    title_font=dict(family="'BVBIntensity', 'Inter', sans-serif", color="#ffd900", size=13),
-    hoverlabel=dict(bgcolor="#111", font_color="#f0f0f0", bordercolor="#2a2a2a"),
 )
 
 
@@ -1721,15 +1724,11 @@ def sprint_phase_rankings_plotly(df: pd.DataFrame, session: str) -> dict:
 # ─────────────────────────────────────────────
 # PDF REPORT
 # ─────────────────────────────────────────────
-# ─────────────────────────────────────────────
 # PDF ENGINE  (elite report generator)
+# BVB Frauen — Elite PDF Report Engine
+# Replaces generate_team_pdf() and generate_player_pdf().
+# Charts rendered via Matplotlib → PNG → embedded in ReportLab PDF.
 # ─────────────────────────────────────────────
-"""
-BVB Frauen — Elite PDF Report Engine
-======================================
-Replaces generate_team_pdf() and generate_player_pdf().
-Charts rendered via Matplotlib → PNG → embedded in ReportLab PDF.
-"""
 
 import io
 import math
