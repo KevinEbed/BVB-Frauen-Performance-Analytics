@@ -15,6 +15,45 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 import io
 import re
+import base64
+import os
+
+# ── BVB DESIGN ASSETS ─────────────────────────────────────────────────────────
+def _asset_b64(rel_path: str, mime: str = "font/woff2") -> str:
+    """Load a design asset as a base64 data URI. Returns '' on failure."""
+    abs_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), rel_path)
+    try:
+        with open(abs_path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        return f"data:{mime};base64,{b64}"
+    except Exception:
+        return ""
+
+def _asset_raw_b64(rel_path: str) -> str:
+    """Return raw base64 string (no data URI prefix)."""
+    abs_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), rel_path)
+    try:
+        with open(abs_path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    except Exception:
+        return ""
+
+# Preload brand assets (called once at module level)
+_FONT_INTENSITY = _asset_b64(
+    r"BVB Design\INTENSITY_Web\INTENSITY\BVBIntensity-FunctionalHeadline.woff2")
+_FONT_CLASSIC   = _asset_b64(
+    r"BVB Design\CLASSIC_Web\CLASSIC\BVBClassic-FunctionalHeadline.woff2")
+_FONT_COPY      = _asset_b64(
+    r"BVB Design\COPY_Web\BVB Copy Web Fonts\BVBCopy-Bold.woff2")
+_FONT_COPY_REG  = _asset_b64(
+    r"BVB Design\COPY_Web\BVB Copy Web Fonts\BVBCopy-Regular.woff2")
+
+_LOGO_FRAUEN_B64    = _asset_raw_b64(r"BVB Design\BVB_Frauen_vertikal_RGB.png")
+_LOGO_WORDMARK_B64  = _asset_raw_b64(r"BVB Design\Wordmark_2zeilig_RGB.png")
+_LOGO_FRAUEN_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    r"BVB Design\BVB_Frauen_vertikal_RGB.png")
+_LOGO_WORDMARK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    r"BVB Design\Wordmark_2zeilig_RGB.png")
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
@@ -26,19 +65,286 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# BVB theme
-st.markdown("""
+# ── BVB PREMIUM THEME ─────────────────────────────────────────────────────────
+_BVB_CSS = f"""
 <style>
-    /* BVB Yellow accents */
-    [data-testid="stMetricValue"]     { color: #FDE000 !important; font-weight: 700; }
-    [data-testid="stMetricDelta"]     { font-size: 0.85rem; }
-    h1, h2, h3                        { color: #FDE000; }
-    [data-testid="stSidebar"]         { background-color: #0f0f0f; }
-    .stTabs [data-baseweb="tab"]      { color: #888; }
-    .stTabs [aria-selected="true"]    { color: #FDE000; border-bottom: 2px solid #FDE000; }
-    div[data-testid="metric-container"] { background: #111; border-radius: 10px; padding: 14px; border: 1px solid #1e1e1e; }
+/* ── BRAND FONTS ─────────────────────────────────────── */
+@font-face {{
+    font-family: 'BVBIntensity';
+    src: url('{_FONT_INTENSITY}') format('woff2');
+    font-weight: normal; font-style: normal;
+}}
+@font-face {{
+    font-family: 'BVBClassic';
+    src: url('{_FONT_CLASSIC}') format('woff2');
+    font-weight: normal; font-style: normal;
+}}
+@font-face {{
+    font-family: 'BVBCopy';
+    src: url('{_FONT_COPY}') format('woff2');
+    font-weight: 700; font-style: normal;
+}}
+@font-face {{
+    font-family: 'BVBCopyReg';
+    src: url('{_FONT_COPY_REG}') format('woff2');
+    font-weight: 400; font-style: normal;
+}}
+
+/* ── BASE ────────────────────────────────────────────── */
+html, body, [class*="css"] {{
+    font-family: 'BVBClassic', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}}
+
+/* ── APP SHELL ───────────────────────────────────────── */
+.stApp {{ background-color: #050505; }}
+.stMain .block-container {{
+    padding-top: 1.5rem !important;
+    padding-bottom: 2rem !important;
+    max-width: 100% !important;
+}}
+
+/* ── SIDEBAR ─────────────────────────────────────────── */
+[data-testid="stSidebar"] {{
+    background: #080808 !important;
+    border-right: 1px solid #1a1a1a !important;
+}}
+[data-testid="stSidebarContent"] {{
+    padding: 0 !important;
+}}
+[data-testid="stSidebarContent"] > div:first-child {{
+    padding: 0 1rem 1rem 1rem;
+}}
+
+/* ── HEADINGS ────────────────────────────────────────── */
+h1, h2, h3 {{
+    font-family: 'BVBIntensity', 'Inter', sans-serif !important;
+    color: #ffd900 !important;
+    letter-spacing: 0.5px;
+}}
+h4, h5, h6 {{
+    font-family: 'BVBClassic', 'Inter', sans-serif !important;
+    color: #e0e0e0 !important;
+}}
+
+/* ── TABS ────────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] {{
+    background: #0a0a0a;
+    border-bottom: 1px solid #1e1e1e;
+    gap: 0;
+    padding: 0 4px;
+}}
+.stTabs [data-baseweb="tab"] {{
+    color: #555 !important;
+    font-family: 'BVBClassic', sans-serif !important;
+    font-size: 11px !important;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    padding: 10px 14px !important;
+    border-radius: 0 !important;
+    border-bottom: 2px solid transparent !important;
+    transition: color 0.15s;
+}}
+.stTabs [aria-selected="true"] {{
+    color: #ffd900 !important;
+    border-bottom: 2px solid #ffd900 !important;
+    background: transparent !important;
+}}
+.stTabs [data-baseweb="tab"]:hover {{
+    color: #bbb !important;
+    background: #111 !important;
+}}
+[data-testid="stTabsContent"] {{
+    padding-top: 1rem;
+}}
+
+/* ── BUTTONS ─────────────────────────────────────────── */
+.stButton > button {{
+    background: #ffd900 !important;
+    color: #000000 !important;
+    font-family: 'BVBIntensity', sans-serif !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.5px !important;
+    text-transform: uppercase !important;
+    border: none !important;
+    border-radius: 3px !important;
+    padding: 0.45rem 1.2rem !important;
+    font-size: 11px !important;
+    transition: background 0.15s, transform 0.1s !important;
+}}
+.stButton > button:hover {{
+    background: #ffc400 !important;
+    transform: translateY(-1px) !important;
+}}
+.stButton > button[kind="primary"] {{
+    background: #ffd900 !important;
+    color: #000 !important;
+}}
+.stButton > button[disabled] {{
+    background: #222 !important;
+    color: #555 !important;
+    transform: none !important;
+}}
+
+/* ── DOWNLOAD BUTTONS ────────────────────────────────── */
+.stDownloadButton > button {{
+    background: #111 !important;
+    color: #ffd900 !important;
+    border: 1px solid #ffd900 !important;
+    font-family: 'BVBClassic', sans-serif !important;
+    border-radius: 3px !important;
+    font-size: 11px !important;
+}}
+.stDownloadButton > button:hover {{
+    background: #ffd900 !important;
+    color: #000 !important;
+}}
+
+/* ── METRIC CARDS ────────────────────────────────────── */
+div[data-testid="metric-container"] {{
+    background: #111111 !important;
+    border: 1px solid #1e1e1e !important;
+    border-top: 2px solid #ffd900 !important;
+    border-radius: 6px !important;
+    padding: 14px 16px !important;
+}}
+[data-testid="stMetricValue"] {{
+    color: #ffd900 !important;
+    font-family: 'BVBCopy', 'JetBrains Mono', monospace !important;
+    font-weight: 700 !important;
+    font-size: 1.6rem !important;
+}}
+[data-testid="stMetricLabel"] {{
+    color: #666 !important;
+    font-family: 'BVBClassic', sans-serif !important;
+    font-size: 0.7rem !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.8px !important;
+}}
+[data-testid="stMetricDelta"] {{
+    font-size: 0.78rem !important;
+    font-family: 'BVBCopyReg', monospace !important;
+}}
+
+/* ── TEXT INPUTS ─────────────────────────────────────── */
+.stTextInput > div > div > input {{
+    background: #111 !important;
+    color: #f0f0f0 !important;
+    border: 1px solid #2a2a2a !important;
+    border-radius: 4px !important;
+}}
+.stTextInput > div > div > input:focus {{
+    border-color: #ffd900 !important;
+    box-shadow: 0 0 0 1px #ffd900 !important;
+}}
+.stTextInput label {{
+    color: #888 !important;
+    font-size: 11px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+}}
+
+/* ── SELECTBOX ───────────────────────────────────────── */
+.stSelectbox > div > div > div {{
+    background: #111 !important;
+    color: #f0f0f0 !important;
+    border: 1px solid #2a2a2a !important;
+}}
+.stSelectbox label {{
+    color: #888 !important;
+    font-size: 11px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+}}
+
+/* ── FILE UPLOADER ───────────────────────────────────── */
+[data-testid="stFileUploader"] {{
+    background: #111 !important;
+    border: 1px dashed #2a2a2a !important;
+    border-radius: 6px !important;
+}}
+[data-testid="stFileUploader"]:hover {{
+    border-color: #ffd900 !important;
+}}
+
+/* ── DATAFRAMES ──────────────────────────────────────── */
+.stDataFrame {{
+    border: 1px solid #1e1e1e !important;
+    border-radius: 6px !important;
+    overflow: hidden !important;
+}}
+[data-testid="stDataFrame"] th {{
+    background: #111 !important;
+    color: #ffd900 !important;
+    font-family: 'BVBClassic', sans-serif !important;
+    font-size: 11px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+}}
+
+/* ── DIVIDERS ────────────────────────────────────────── */
+hr {{
+    border-color: #1e1e1e !important;
+    margin: 0.6rem 0 !important;
+}}
+
+/* ── EXPANDERS ───────────────────────────────────────── */
+[data-testid="stExpander"] {{
+    background: #0d0d0d !important;
+    border: 1px solid #1e1e1e !important;
+    border-radius: 6px !important;
+}}
+[data-testid="stExpander"] summary {{
+    color: #888 !important;
+    font-size: 12px !important;
+}}
+
+/* ── SPINNERS / STATUS ───────────────────────────────── */
+[data-testid="stSpinner"] {{ color: #ffd900 !important; }}
+
+/* ── SUCCESS / WARNING / ERROR ───────────────────────── */
+[data-testid="stAlert"][data-baseweb="notification"] {{
+    border-radius: 4px !important;
+    border-left: 3px solid !important;
+}}
+
+/* ── PROGRESS BAR ────────────────────────────────────── */
+[data-testid="stProgressBar"] > div > div {{
+    background-color: #ffd900 !important;
+}}
+
+/* ── CAPTIONS / SMALL TEXT ───────────────────────────── */
+[data-testid="stCaptionContainer"] {{
+    color: #555 !important;
+    font-size: 11px !important;
+}}
+
+/* ── SCROLLBAR ───────────────────────────────────────── */
+::-webkit-scrollbar {{ width: 5px; height: 5px; }}
+::-webkit-scrollbar-track {{ background: #050505; }}
+::-webkit-scrollbar-thumb {{ background: #2a2a2a; border-radius: 4px; }}
+::-webkit-scrollbar-thumb:hover {{ background: #ffd900; }}
+
+/* ── SIDEBAR LABELS ──────────────────────────────────── */
+[data-testid="stSidebar"] .stMarkdown p {{
+    color: #888 !important;
+    font-size: 11px !important;
+}}
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {{
+    color: #ffd900 !important;
+    font-size: 13px !important;
+}}
+
+/* ── PLOTLY CHART CONTAINERS ─────────────────────────── */
+.stPlotlyChart {{
+    background: transparent !important;
+    border-radius: 6px !important;
+    overflow: hidden !important;
+}}
 </style>
-""", unsafe_allow_html=True)
+"""
+st.markdown(_BVB_CSS, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
 # CONSTANTS
@@ -122,8 +428,19 @@ def normalize_score(metric: str, value,
     return None
 
 
-BVB_YELLOW = "#FDE000"
-COLORS = ["#FDE000", "#60A5FA", "#4ADE80", "#FB923C", "#C084FC", "#F472B6"]
+# Official BVB brand palette
+BVB_YELLOW   = "#ffd900"   # Official BVB Yellow (Pantone Yellow 012)
+BVB_BLACK    = "#000000"
+BVB_STEEL    = "#232323"
+BVB_CONCRETE = "#d6d6d6"
+BVB_CREAM    = "#fffdf2"
+BVB_NEON     = "#d8ff00"
+# Analytics performance palette (LOW→MID→HIGH)
+PERF_RED     = "#EF4444"
+PERF_BLUE    = "#3B82F6"
+PERF_GREEN   = "#22C55E"
+
+COLORS = [BVB_YELLOW, "#60A5FA", "#4ADE80", "#FB923C", "#C084FC", "#F472B6"]
 
 def hex_rgba(hex_color: str, alpha: float) -> str:
     """Convert hex color to rgba string for Plotly compatibility."""
@@ -417,9 +734,38 @@ def parse_excel(file, session_label: str) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+def _apply_best_sprint_trial(df: pd.DataFrame) -> pd.DataFrame:
+    """Overwrite t5/t10/t20/t30 from stored raw r1/r2 trial columns using best-complete-trial logic.
+    Only touches rows where at least one trial's t20 is present. Safe to call on every load.
+    """
+    r1_t20 = pd.to_numeric(df["sprint_t20_r1"], errors="coerce")
+    r2_t20 = pd.to_numeric(df["sprint_t20_r2"], errors="coerce")
+    r1_ok  = r1_t20.notna() & (r1_t20 > 0)
+    r2_ok  = r2_t20.notna() & (r2_t20 > 0)
+    has_data = r1_ok | r2_ok
+    if not has_data.any():
+        return df
+    use_r2 = r2_ok & (~r1_ok | (r2_t20 < r1_t20))
+    for best_col, r1_col, r2_col in [
+        ("t5",  "sprint_t5_r1",  "sprint_t5_r2"),
+        ("t10", "sprint_t10_r1", "sprint_t10_r2"),
+        ("t20", "sprint_t20_r1", "sprint_t20_r2"),
+        ("t30", "sprint_t30_r1", "sprint_t30_r2"),
+    ]:
+        r1_v = pd.to_numeric(df[r1_col], errors="coerce")
+        r2_v = pd.to_numeric(df[r2_col], errors="coerce")
+        new_v = df[best_col].copy()
+        new_v[has_data &  use_r2] = r2_v[has_data &  use_r2]
+        new_v[has_data & ~use_r2] = r1_v[has_data & ~use_r2]
+        df = df.copy()
+        df[best_col] = new_v
+    return df
+
+
 def get_df() -> pd.DataFrame:
-    """Always loads fresh from DB and recomputes Z-scores."""
+    """Always loads fresh from DB, applies best-complete-trial sprint fix, then Z-scores."""
     raw = st.session_state.db.load_dataframe()
+    raw = _apply_best_sprint_trial(raw)
     return compute_z_scores(raw)
 
 
@@ -508,7 +854,7 @@ def compute_clusters(df: pd.DataFrame, session: str = None):
     km = KMeans(n_clusters=min(4, len(feat_df)), random_state=42, n_init=10)
     labels = km.fit_predict(X_s)
     archetype_names = ["⚡ Explosiv-Kraft", "🏃 Schnelligkeit", "🫁 Ausdauer", "🎯 Allround"]
-    archetype_colors = ["#FDE000", "#60A5FA", "#4ADE80", "#FB923C"]
+    archetype_colors = ["#ffd900", "#60A5FA", "#4ADE80", "#FB923C"]
     cluster_props = []
     _idx = {col: i for i, col in enumerate(feat_cols)}
     for ci in range(km.n_clusters):
@@ -605,9 +951,16 @@ def generate_commentary(df: pd.DataFrame, name: str) -> dict:
 # CHART HELPERS (Plotly)
 # ─────────────────────────────────────────────
 PLOTLY_LAYOUT = dict(
-    paper_bgcolor="#111", plot_bgcolor="#111",
-    font_color="#888", font_family="monospace",
+    paper_bgcolor="#0a0a0a",
+    plot_bgcolor="#0a0a0a",
+    font_color="#888",
+    font_family="'BVBClassic', 'Inter', -apple-system, sans-serif",
     margin=dict(l=20, r=20, t=40, b=20),
+    title_font=dict(family="'BVBIntensity', 'Inter', sans-serif", color="#ffd900", size=13),
+    legend=dict(bgcolor="rgba(0,0,0,0)", font_color="#888"),
+    hoverlabel=dict(bgcolor="#111", font_color="#f0f0f0", bordercolor="#2a2a2a"),
+    xaxis=dict(gridcolor="#1a1a1a", linecolor="#222", tickcolor="#333"),
+    yaxis=dict(gridcolor="#1a1a1a", linecolor="#222", tickcolor="#333"),
 )
 
 
@@ -633,7 +986,7 @@ def radar_chart(df: pd.DataFrame, names: list, sessions: list = None, title: str
             for m in RADAR_METRICS
         }
 
-    palette = COLORS if len(names) > 1 else ["#FDE000", "#60A5FA", "#4ADE80"]
+    palette = COLORS if len(names) > 1 else ["#ffd900", "#60A5FA", "#4ADE80"]
 
     # ── Build global fixed axis list shared by all traces ───────────────────────
     global_metrics, global_labels = [], []
@@ -717,7 +1070,7 @@ def radar_chart(df: pd.DataFrame, names: list, sessions: list = None, title: str
 
     fig.update_layout(
         **PLOTLY_LAYOUT,
-        title=dict(text=title, font_color="#FDE000", font_size=14),
+        title=dict(text=title, font_color="#ffd900", font_size=14),
         polar=dict(
             bgcolor="#111",
             radialaxis=dict(
@@ -743,7 +1096,7 @@ def trend_chart(df: pd.DataFrame, name: str) -> go.Figure:
     hist = player_df.sort_values("_sk").drop(columns=["_sk"])
     sessions = hist["session"].tolist()
     metrics_to_plot = [
-        ("cmj", "CMJ (cm)", "#FDE000"),
+        ("cmj", "CMJ (cm)", "#ffd900"),
         ("vo2max", "VO2max", "#4ADE80"),
         ("t20", "Sprint t20 (s)", "#60A5FA"),
         ("agility", "Agility (s)", "#FB923C"),
@@ -784,7 +1137,7 @@ def trend_chart(df: pd.DataFrame, name: str) -> go.Figure:
     fig.update_layout(
         **PLOTLY_LAYOUT,
         height=420,
-        title=dict(text=f"{name} — Leistungsentwicklung", font_color="#FDE000", font_size=13),
+        title=dict(text=f"{name} — Leistungsentwicklung", font_color="#ffd900", font_size=13),
     )
     for ann in fig.layout.annotations:
         ann.font.color = "#666"
@@ -823,7 +1176,7 @@ def comparison_bar(df: pd.DataFrame, name: str, session: str) -> go.Figure:
     ))
     fig.add_trace(go.Bar(
         y=labels, x=player_vals, name=name.split()[-1],
-        orientation="h", marker_color="#FDE000",
+        orientation="h", marker_color="#ffd900",
         hovertemplate=f"{name}: %{{x:.1f}}<extra></extra>",
     ))
     fig.add_vline(x=100, line_color="#444", line_dash="dash", line_width=1)
@@ -834,7 +1187,7 @@ def comparison_bar(df: pd.DataFrame, name: str, session: str) -> go.Figure:
         yaxis=dict(tickfont=dict(color="#888")),
         legend=dict(font_color="#666", bgcolor="rgba(0,0,0,0)"),
         height=320,
-        title=dict(text=f"Vergleich mit Team Ø · {session}", font_color="#FDE000", font_size=13),
+        title=dict(text=f"Vergleich mit Team Ø · {session}", font_color="#ffd900", font_size=13),
     )
     return fig
 
@@ -940,7 +1293,7 @@ def ranked_bar_chart(df: pd.DataFrame, metric: str, sessions_to_show: list = Non
         height=460,
         title=dict(
             text=f"{info['label']}  <span style='font-size:13px;color:#555'>{info['unit']}</span>",
-            font=dict(color="#FDE000", size=15),
+            font=dict(color="#ffd900", size=15),
         ),
         xaxis=dict(
             tickangle=-45,
@@ -973,7 +1326,7 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
     """
     sessions = sorted(df["session"].unique(), key=_session_key)
     fig = go.Figure()
-    palette = ["#60A5FA", "#FDE000", "#4ADE80", "#FB923C"]
+    palette = ["#60A5FA", "#ffd900", "#4ADE80", "#FB923C"]
 
     # ── Pass 1: build global fixed axis list (any session with data for that metric) ──
     global_metrics, global_labels = [], []
@@ -1065,7 +1418,7 @@ def team_radar_chart(df: pd.DataFrame) -> go.Figure:
         height=380,
         title=dict(
             text="Team Durchschnitt · Leistungsvergleich",
-            font_color="#FDE000", font_size=13,
+            font_color="#ffd900", font_size=13,
         ),
     )
     return fig
@@ -1251,11 +1604,11 @@ def sprint_curve_plotly(player_name: str, row, team_df: pd.DataFrame,
         x=distances, y=p_times,
         name=player_name.split()[-1],
         mode="lines+markers+text",
-        line=dict(color="#FDE000", width=2.5),
-        marker=dict(size=8, color="#FDE000"),
+        line=dict(color="#ffd900", width=2.5),
+        marker=dict(size=8, color="#ffd900"),
         text=[None] + [f"{v:.2f}s" if v else "" for v in p_times[1:]],
         textposition="top center",
-        textfont=dict(size=8, color="#FDE000"),
+        textfont=dict(size=8, color="#ffd900"),
         hovertemplate=f"{player_name} · %{{x}}m: %{{y:.3f}}s<extra></extra>",
     ))
 
@@ -1263,7 +1616,7 @@ def sprint_curve_plotly(player_name: str, row, team_df: pd.DataFrame,
         **PLOTLY_LAYOUT,
         title=dict(
             text=title or f"{player_name.split()[-1]} · Sprint Kurve",
-            font=dict(color="#FDE000", size=13),
+            font=dict(color="#ffd900", size=13),
         ),
         xaxis=dict(
             title=dict(text="Distanz (m)", font=dict(color="#888", size=11)),
@@ -1302,14 +1655,14 @@ def sprint_phase_bar_plotly(player_name: str, phases: dict,
         ))
     fig.add_trace(go.Bar(
         y=labels, x=[phases[l] for l in labels], name=player_name.split()[-1],
-        orientation="h", marker_color="#FDE000",
+        orientation="h", marker_color="#ffd900",
         hovertemplate=f"{player_name}: %{{x:.3f}}s<extra></extra>",
     ))
 
     fig.update_layout(
         **PLOTLY_LAYOUT,
         barmode="group",
-        title=dict(text="Sprint Phasenzeiten  ↓ = schneller", font_color="#FDE000", font_size=13),
+        title=dict(text="Sprint Phasenzeiten  ↓ = schneller", font_color="#ffd900", font_size=13),
         xaxis=dict(title="Zeit (s)", tickfont=dict(color="#555")),
         yaxis=dict(tickfont=dict(color="#888")),
         legend=dict(font_color="#666", bgcolor="rgba(0,0,0,0)"),
@@ -1339,7 +1692,7 @@ def sprint_phase_rankings_plotly(df: pd.DataFrame, session: str) -> dict:
             continue
         rdf = pd.DataFrame(rows).sort_values("split")  # ascending = fastest first
         n   = len(rdf)
-        bar_colors = (["#22C55E"] + ["#FDE000"] * max(0, n - 2) +
+        bar_colors = (["#22C55E"] + ["#ffd900"] * max(0, n - 2) +
                       (["#EF4444"] if n > 1 else []))
         team_avg = rdf["split"].mean()
 
@@ -1359,7 +1712,7 @@ def sprint_phase_rankings_plotly(df: pd.DataFrame, session: str) -> dict:
                       annotation_position="right")
         fig.update_layout(
             **PLOTLY_LAYOUT, height=320,
-            title=dict(text=f"Phase {label}  ·  Rangliste", font_color="#FDE000", font_size=13),
+            title=dict(text=f"Phase {label}  ·  Rangliste", font_color="#ffd900", font_size=13),
             xaxis=dict(tickfont=dict(color="#777"), tickangle=-30),
             yaxis=dict(title="Zeit (s)  ↓ = schneller",
                        tickfont=dict(color="#555"), gridcolor="#1a1a1a"),
@@ -1403,30 +1756,33 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 
 
-# ── CONSTANTS ─────────────────────────────────────────────────────────────────
-BVB_Y   = colors.HexColor("#FDE000")
-BVB_BK  = colors.HexColor("#0A0A0A")
-BVB_DG  = colors.HexColor("#1A1A1A")
+# ── PDF BRAND CONSTANTS (Official BVB) ────────────────────────────────────────
+BVB_Y   = colors.HexColor("#ffd900")   # Official BVB Yellow
+BVB_BK  = colors.HexColor("#000000")   # BVB Black
+BVB_DG  = colors.HexColor("#111111")   # Dark surface
+BVB_STL = colors.HexColor("#232323")   # Steel grey
 DGRAY   = colors.HexColor("#2D2D2D")
 MGRAY   = colors.HexColor("#555555")
 LGRAY   = colors.HexColor("#F0F0F0")
+PDF_CREAM = colors.HexColor("#fffdf2")  # BVB White / warm white
 WHITE   = colors.white
-GREEN   = colors.HexColor("#22C55E")
-RED     = colors.HexColor("#EF4444")
-AMBER   = colors.HexColor("#F59E0B")
-BLUE    = colors.HexColor("#3B82F6")
+GREEN   = colors.HexColor("#22C55E")   # High performance
+RED     = colors.HexColor("#EF4444")   # Low performance
+AMBER   = colors.HexColor("#F59E0B")   # Developing
+BLUE    = colors.HexColor("#3B82F6")   # Mid performance
 
 W_PAGE  = A4[0]
 H_PAGE  = A4[1]
 MARGIN  = 1.5 * cm
 W_BODY  = W_PAGE - 2 * MARGIN   # ≈ 18.2 cm
 
-MPL_BG   = "#0A0A0A"
-MPL_BG2  = "#111111"
-MPL_GRID = "#222222"
-MPL_TXT  = "#AAAAAA"
-MPL_Y    = "#FDE000"
-MPL_DARK = "#2D2D2D"
+# Matplotlib dark theme constants
+MPL_BG   = "#050505"
+MPL_BG2  = "#0d0d0d"
+MPL_GRID = "#1a1a1a"
+MPL_TXT  = "#999999"
+MPL_Y    = "#ffd900"   # Official BVB Yellow
+MPL_DARK = "#232323"
 
 # PDF-only metric labels and decimal precision (do NOT clash with global RADAR_LABELS)
 PDF_METRIC_LABELS = {
@@ -1526,30 +1882,38 @@ def team_axis_scores_vs_grand(df: pd.DataFrame, session: str) -> dict:
 
 
 def style():
-    """Return shared ParagraphStyle factory dict."""
+    """Return shared ParagraphStyle factory dict — official BVB document typography."""
+    _BODY_COLOR  = colors.HexColor("#1a1a1a")
+    _META_COLOR  = colors.HexColor("#666666")
+    _SUB_COLOR   = colors.HexColor("#111111")
     return {
         "cover_title": ParagraphStyle("ct", fontName="Helvetica-Bold",
-            fontSize=28, textColor=BVB_Y, leading=34, alignment=TA_CENTER),
+            fontSize=30, textColor=BVB_Y, leading=36, alignment=TA_CENTER,
+            spaceAfter=4),
         "cover_sub": ParagraphStyle("cs", fontName="Helvetica",
-            fontSize=11, textColor=colors.HexColor("#CCCCCC"), leading=16,
+            fontSize=11, textColor=colors.HexColor("#cccccc"), leading=16,
             alignment=TA_CENTER),
         "cover_meta": ParagraphStyle("cm", fontName="Helvetica",
-            fontSize=8.5, textColor=MGRAY, leading=13, alignment=TA_CENTER),
+            fontSize=8, textColor=_META_COLOR, leading=12, alignment=TA_CENTER),
         "section": ParagraphStyle("sec", fontName="Helvetica-Bold",
-            fontSize=12, textColor=BVB_Y, leading=16, spaceBefore=12, spaceAfter=2),
+            fontSize=11, textColor=BVB_Y, leading=15, spaceBefore=14, spaceAfter=2,
+            letterSpacing=0.8),
         "sub": ParagraphStyle("sub", fontName="Helvetica-Bold",
-            fontSize=9.5, textColor=colors.HexColor("#1A1A1A"), leading=13,
+            fontSize=9, textColor=_SUB_COLOR, leading=13,
             spaceBefore=8, spaceAfter=3),
         "body": ParagraphStyle("body", fontName="Helvetica",
-            fontSize=8.5, textColor=colors.HexColor("#2A2A2A"), leading=12.5),
+            fontSize=8.5, textColor=_BODY_COLOR, leading=13),
         "small": ParagraphStyle("sm", fontName="Helvetica",
-            fontSize=7.5, textColor=MGRAY, leading=10.5),
+            fontSize=7.5, textColor=_META_COLOR, leading=10.5),
         "insight": ParagraphStyle("ins", fontName="Helvetica-Oblique",
-            fontSize=8.5, textColor=colors.HexColor("#1A1A1A"), leading=12.5),
+            fontSize=8.5, textColor=_BODY_COLOR, leading=12.5),
         "caption": ParagraphStyle("cap", fontName="Helvetica",
-            fontSize=7, textColor=MGRAY, leading=9, alignment=TA_CENTER),
+            fontSize=7, textColor=_META_COLOR, leading=9.5, alignment=TA_CENTER),
         "th": ParagraphStyle("th", fontName="Helvetica-Bold",
-            fontSize=8, textColor=BVB_Y, leading=12),
+            fontSize=7.5, textColor=BVB_Y, leading=11),
+        "confidential": ParagraphStyle("conf", fontName="Helvetica-Bold",
+            fontSize=6.5, textColor=colors.HexColor("#cc0000"), leading=9,
+            alignment=TA_CENTER, letterSpacing=1.5),
     }
 
 
@@ -1673,7 +2037,7 @@ def chart_team_radar_pdf_multisession(df: pd.DataFrame, figsize=(5.5, 5.5)) -> b
     Mirrors the web 'Team Durchschnitt · Leistungsvergleich' chart exactly.
     """
     sessions = sorted(df["session"].unique(), key=_session_key)
-    palette  = ["#60A5FA", "#FDE000", "#4ADE80", "#FB923C"]
+    palette  = ["#60A5FA", "#ffd900", "#4ADE80", "#FB923C"]
 
     # Build global axis list: metrics present in ALLTIME_MEAN with at least one session having data
     global_metrics, global_labels = [], []
@@ -1820,7 +2184,7 @@ def chart_trend(player_name: str, df: pd.DataFrame,
         return None
 
     metrics_to_plot = [
-        ("cmj",       "CMJ (cm)",         "#FDE000"),
+        ("cmj",       "CMJ (cm)",         "#ffd900"),
         ("vo2max",    "VO2max",            "#4ADE80"),
         ("t20",       "Sprint 20m (s)",    "#60A5FA"),
         ("t30",       "Sprint 30m (s)",    "#C084FC"),
@@ -1967,74 +2331,78 @@ def rl_sub(story, text, S):
 def styled_table(rows, col_widths, header_rows=1, zebra=True,
                  best_row=None, worst_row=None):
     t = Table(rows, colWidths=col_widths, repeatRows=header_rows)
+    _zebra_a = WHITE
+    _zebra_b = colors.HexColor("#F8F8F6")   # warm off-white for alternate rows
     cmds = [
-        ("BACKGROUND",   (0, 0), (-1, header_rows - 1), colors.HexColor("#1A1A1A")),
-        ("TEXTCOLOR",    (0, 0), (-1, header_rows - 1), BVB_Y),
-        ("FONTNAME",     (0, 0), (-1, header_rows - 1), "Helvetica-Bold"),
-        ("FONTSIZE",     (0, 0), (-1, -1), 8),
-        ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 6),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING",   (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 4),
-        ("LINEBELOW",    (0, header_rows - 1), (-1, header_rows - 1), 1.5, BVB_Y),
-        ("GRID",         (0, header_rows), (-1, -1), 0.25, colors.HexColor("#E8E8E8")),
-        ("BOX",          (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
+        # Header: BVB black background with yellow text
+        ("BACKGROUND",    (0, 0), (-1, header_rows - 1), BVB_BK),
+        ("TEXTCOLOR",     (0, 0), (-1, header_rows - 1), BVB_Y),
+        ("FONTNAME",      (0, 0), (-1, header_rows - 1), "Helvetica-Bold"),
+        ("FONTSIZE",      (0, 0), (-1, -1), 8),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 7),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 7),
+        ("TOPPADDING",    (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        # Yellow accent rule below header
+        ("LINEBELOW",     (0, header_rows - 1), (-1, header_rows - 1), 2, BVB_Y),
+        # Light grid for data rows
+        ("GRID",          (0, header_rows), (-1, -1), 0.3, colors.HexColor("#E0E0E0")),
+        # Outer border
+        ("BOX",           (0, 0), (-1, -1), 0.75, colors.HexColor("#cccccc")),
     ]
     if zebra:
         for i in range(header_rows, len(rows)):
-            bg = WHITE if i % 2 == 0 else colors.HexColor("#F9F9F9")
+            bg = _zebra_a if i % 2 == 0 else _zebra_b
             cmds.append(("BACKGROUND", (0, i), (-1, i), bg))
     if best_row is not None:
-        cmds.append(("BACKGROUND", (0, best_row), (-1, best_row),
-                     colors.HexColor("#DCFCE7")))
-        cmds.append(("TEXTCOLOR",  (0, best_row), (-1, best_row),
-                     colors.HexColor("#166534")))
+        cmds += [
+            ("BACKGROUND", (0, best_row), (-1, best_row), colors.HexColor("#d1fae5")),
+            ("TEXTCOLOR",  (0, best_row), (-1, best_row), colors.HexColor("#065f46")),
+            ("FONTNAME",   (0, best_row), (-1, best_row), "Helvetica-Bold"),
+        ]
     if worst_row is not None:
-        cmds.append(("BACKGROUND", (0, worst_row), (-1, worst_row),
-                     colors.HexColor("#FEE2E2")))
-        cmds.append(("TEXTCOLOR",  (0, worst_row), (-1, worst_row),
-                     colors.HexColor("#991B1B")))
+        cmds += [
+            ("BACKGROUND", (0, worst_row), (-1, worst_row), colors.HexColor("#fee2e2")),
+            ("TEXTCOLOR",  (0, worst_row), (-1, worst_row), colors.HexColor("#991b1b")),
+        ]
     t.setStyle(TableStyle(cmds))
     return t
 
 
 def score_card_table(cards: list) -> Table:
-    """
-    Render a row of premium metric cards matching website style.
-    cards = list of (label, value, badge_text, badge_color)
-    Uses nested Table per card so spacing between label / value / badge is reliable.
-    """
+    """Row of BVB-branded metric score cards — black header, yellow accent bar."""
     lbl_style = ParagraphStyle("sc_lbl", fontName="Helvetica",
-        fontSize=6.5, textColor=colors.HexColor("#888888"),
-        leading=9, alignment=TA_CENTER)
+        fontSize=6, textColor=colors.HexColor("#888888"),
+        leading=8, alignment=TA_CENTER, letterSpacing=0.8)
     val_style = ParagraphStyle("sc_val", fontName="Helvetica-Bold",
-        fontSize=17, leading=22, alignment=TA_CENTER)
+        fontSize=18, leading=23, alignment=TA_CENTER)
     badge_style = ParagraphStyle("sc_badge", fontName="Helvetica-Bold",
-        fontSize=6.5, leading=9, alignment=TA_CENTER)
+        fontSize=6, leading=8, alignment=TA_CENTER, letterSpacing=0.6)
 
     CARD_W = W_BODY / len(cards)
     outer_cells = []
+    _card_bg  = colors.HexColor("#f5f5f0")  # warm off-white card surface
+    _sep_line = colors.HexColor("#e8e8e4")
 
     for label, value, badge, badge_color in cards:
-        val_color = badge_color if badge_color not in ("#888888", "#555555") else "#222222"
+        val_color = badge_color if badge_color not in ("#888888", "#555555") else "#111111"
         inner = Table(
             [
-                [Paragraph(label, lbl_style)],
+                [Paragraph(label.upper(), lbl_style)],
                 [Paragraph(f'<font color="{val_color}">{value}</font>', val_style)],
-                [Paragraph(f'<font color="{badge_color}">{badge}</font>', badge_style)],
+                [Paragraph(f'<font color="{badge_color}">▪ {badge}</font>', badge_style)],
             ],
-            colWidths=[CARD_W - 8],
+            colWidths=[CARD_W - 10],
         )
         inner.setStyle(TableStyle([
             ("ALIGN",        (0, 0), (-1, -1), "CENTER"),
             ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING",   (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING",(0, 0), (-1, -1), 3),
+            ("TOPPADDING",   (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING",(0, 0), (-1, -1), 4),
             ("LEFTPADDING",  (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            # Row heights: label / value / badge
-            ("ROWBACKGROUNDS", (0, 0), (-1, -1), [colors.HexColor("#F5F5F5")]),
+            ("ROWBACKGROUNDS", (0, 0), (-1, -1), [_card_bg]),
         ]))
         outer_cells.append(inner)
 
@@ -2042,14 +2410,14 @@ def score_card_table(cards: list) -> Table:
     t.setStyle(TableStyle([
         ("VALIGN",       (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN",        (0, 0), (-1, -1), "CENTER"),
-        ("TOPPADDING",   (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING",(0, 0), (-1, -1), 8),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 2),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-        ("BACKGROUND",   (0, 0), (-1, -1), colors.HexColor("#F5F5F5")),
-        ("BOX",          (0, 0), (-1, -1), 0.5, colors.HexColor("#DDDDDD")),
-        ("LINEAFTER",    (0, 0), (-2, -1), 0.5, colors.HexColor("#DDDDDD")),
-        ("LINEBELOW",    (0, 0), (-1, -1), 2.5, BVB_Y),
+        ("TOPPADDING",   (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING",(0, 0), (-1, -1), 10),
+        ("LEFTPADDING",  (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("BACKGROUND",   (0, 0), (-1, -1), _card_bg),
+        ("BOX",          (0, 0), (-1, -1), 0.5, _sep_line),
+        ("LINEAFTER",    (0, 0), (-2, -1), 0.5, _sep_line),
+        ("LINEBELOW",    (0, 0), (-1, -1), 2.5, BVB_Y),   # BVB yellow bottom accent
     ]))
     return t
 
@@ -2058,47 +2426,82 @@ def cover_page_elements(title: str, subtitle: str,
                         session: str, n_players: int, S: dict) -> list:
     elems = []
 
-    # Premium header band — dark background with BVB branding text
-    brand_style = ParagraphStyle("brand", fontName="Helvetica-Bold",
-        fontSize=11, textColor=BVB_Y, leading=16, alignment=TA_CENTER)
-    dept_style  = ParagraphStyle("dept",  fontName="Helvetica",
-        fontSize=8,  textColor=colors.HexColor("#888888"), leading=12, alignment=TA_CENTER)
+    # ── Official BVB header band ──────────────────────────────────────────────
+    dept_style  = ParagraphStyle("dept", fontName="Helvetica",
+        fontSize=7.5, textColor=colors.HexColor("#888888"), leading=11, alignment=TA_CENTER)
 
-    header_inner = Table(
-        [[Paragraph("BVB FRAUEN", brand_style)],
-         [Paragraph("Performance Diagnostics · Sports Science Department", dept_style)]],
-        colWidths=[W_BODY],
-    )
-    header_inner.setStyle(TableStyle([
+    # Build header: logo left, title right — or full-width text if logo unavailable
+    logo_exists = os.path.isfile(_LOGO_FRAUEN_PATH)
+    if logo_exists:
+        try:
+            logo_img = Image(_LOGO_FRAUEN_PATH)
+            # Scale logo to fit in 2.8 cm height
+            _lh = 2.2 * cm
+            _lw = _lh * (logo_img.imageWidth / logo_img.imageHeight)
+            logo_img = Image(_LOGO_FRAUEN_PATH, width=_lw, height=_lh)
+            brand_style = ParagraphStyle("brand", fontName="Helvetica-Bold",
+                fontSize=13, textColor=BVB_Y, leading=18, alignment=TA_CENTER)
+            hdr_right = Table(
+                [[Paragraph("BVB FRAUEN", brand_style)],
+                 [Paragraph("Leistungsdiagnostik · Sportswissenschaftliche Abteilung", dept_style)]],
+                colWidths=[W_BODY - _lw - 0.6 * cm],
+            )
+            hdr_right.setStyle(TableStyle([
+                ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 0),
+                ("TOPPADDING",    (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]))
+            hdr_inner = Table(
+                [[logo_img, hdr_right]],
+                colWidths=[_lw + 0.6 * cm, W_BODY - _lw - 0.6 * cm],
+            )
+        except Exception:
+            logo_exists = False
+
+    if not logo_exists:
+        brand_style = ParagraphStyle("brand", fontName="Helvetica-Bold",
+            fontSize=13, textColor=BVB_Y, leading=18, alignment=TA_CENTER)
+        hdr_inner = Table(
+            [[Paragraph("BVB FRAUEN", brand_style)],
+             [Paragraph("Leistungsdiagnostik · Sportswissenschaftliche Abteilung", dept_style)]],
+            colWidths=[W_BODY],
+        )
+
+    hdr_inner.setStyle(TableStyle([
         ("BACKGROUND",    (0, 0), (-1, -1), BVB_BK),
         ("TOPPADDING",    (0, 0), (-1, -1), 10),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 0),
-        ("LINEABOVE",     (0, 0), (-1, 0),  4, BVB_Y),
-        ("LINEBELOW",     (0, -1),(-1, -1), 1, colors.HexColor("#333333")),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 10),
+        ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
+        ("LINEABOVE",     (0, 0), (-1, 0),  5, BVB_Y),
+        ("LINEBELOW",     (0, -1), (-1, -1), 0.5, colors.HexColor("#222222")),
     ]))
-    elems.append(header_inner)
-    elems.append(Spacer(1, 0.5 * cm))
+    elems.append(hdr_inner)
+    elems.append(Spacer(1, 0.45 * cm))
 
-    # BVB yellow accent line
-    elems.append(HRFlowable(width="100%", thickness=3.5, color=BVB_Y,
-                             spaceAfter=14, spaceBefore=0))
-
+    # ── Accent rule + title ───────────────────────────────────────────────────
+    elems.append(HRFlowable(width="100%", thickness=3, color=BVB_Y,
+                             spaceAfter=16, spaceBefore=0))
     elems.append(Paragraph(title, S["cover_title"]))
-    elems.append(Spacer(1, 0.25 * cm))
+    elems.append(Spacer(1, 0.2 * cm))
     elems.append(Paragraph(subtitle, S["cover_sub"]))
-    elems.append(Spacer(1, 0.35 * cm))
-    elems.append(HRFlowable(width="55%", thickness=0.75, color=DGRAY,
-                             spaceAfter=10, spaceBefore=0))
+    elems.append(Spacer(1, 0.4 * cm))
+    elems.append(HRFlowable(width="60%", thickness=0.5, color=DGRAY,
+                             spaceAfter=12, spaceBefore=0))
+
+    # ── Meta info row ─────────────────────────────────────────────────────────
     elems.append(Paragraph(
-        f"Session: <b>{session}</b>   ·   {n_players} Spielerinnen getestet   ·   "
+        f"Session: <b>{session}</b>  ·  {n_players} Spielerinnen  ·  "
         f"{datetime.now().strftime('%d.%m.%Y')}",
         S["cover_meta"]))
-    elems.append(Spacer(1, 0.2 * cm))
+    elems.append(Spacer(1, 0.15 * cm))
     elems.append(Paragraph(
-        "BVB Frauen · Performance Diagnostics · Sports Science Department",
+        "BVB Frauen · Sportswissenschaftliche Abteilung · Interner Bericht",
         S["cover_meta"]))
+    elems.append(Spacer(1, 0.2 * cm))
+    elems.append(Paragraph("VERTRAULICH – NUR FÜR INTERNEN GEBRAUCH", S["confidential"]))
     return elems
 
 
@@ -2182,24 +2585,40 @@ def training_recommendations(player: str, df: pd.DataFrame, session: str) -> lis
 # ── FOOTER CANVAS ──────────────────────────────────────────────────────────────
 
 def make_footer_canvas(session_label: str):
+    _logo_ok = os.path.isfile(_LOGO_WORDMARK_PATH)
     def footer(canvas, doc):
         canvas.saveState()
         # Black footer band
         canvas.setFillColor(BVB_BK)
-        canvas.rect(0, 0, W_PAGE, 1.1 * cm, fill=1, stroke=0)
-        # Yellow accent line above footer
+        canvas.rect(0, 0, W_PAGE, 1.15 * cm, fill=1, stroke=0)
+        # BVB yellow accent line above footer
         canvas.setFillColor(BVB_Y)
-        canvas.rect(0, 1.1 * cm, W_PAGE, 0.12 * cm, fill=1, stroke=0)
-        # Footer text
-        canvas.setFont("Helvetica", 7)
-        canvas.setFillColor(colors.HexColor("#999999"))
-        canvas.drawString(MARGIN, 0.38 * cm,
-            f"BVB Frauen · Performance Diagnostics · Session: {session_label}")
+        canvas.rect(0, 1.15 * cm, W_PAGE, 0.18 * cm, fill=1, stroke=0)
+        # Left: session info
+        canvas.setFont("Helvetica", 6.5)
+        canvas.setFillColor(colors.HexColor("#888888"))
+        canvas.drawString(MARGIN, 0.52 * cm,
+            f"BVB Frauen · Sportswissenschaftliche Abteilung · Session: {session_label}")
+        # Left bottom: confidential label
+        canvas.setFont("Helvetica-Bold", 6)
+        canvas.setFillColor(colors.HexColor("#cc2200"))
+        canvas.drawString(MARGIN, 0.22 * cm, "VERTRAULICH – NUR FÜR INTERNEN GEBRAUCH")
+        # Right: page number + date
         canvas.setFont("Helvetica-Bold", 7)
-        canvas.setFillColor(colors.HexColor("#BBBBBB"))
+        canvas.setFillColor(colors.HexColor("#cccccc"))
         canvas.drawRightString(
-            W_PAGE - MARGIN, 0.38 * cm,
-            f"Seite {doc.page}  ·  Generiert am {datetime.now().strftime('%d.%m.%Y')}")
+            W_PAGE - MARGIN, 0.52 * cm,
+            f"Seite {doc.page}  ·  {datetime.now().strftime('%d.%m.%Y')}")
+        # Right bottom: BVB wordmark logo (if available)
+        if _logo_ok:
+            try:
+                _lh = 0.55 * cm
+                canvas.drawImage(_LOGO_WORDMARK_PATH,
+                                  W_PAGE - MARGIN - 1.8 * cm,
+                                  0.18 * cm,
+                                  height=_lh, preserveAspectRatio=True, mask="auto")
+            except Exception:
+                pass
         canvas.restoreState()
     return footer
 
@@ -2974,8 +3393,32 @@ if not sessions:
 # SIDEBAR
 # ─────────────────────────────────────────────
 with st.sidebar:
-    st.markdown(f"## 🟡 BVB Analytics")
-    st.caption("1. Mannschaft · Saison 25/26")
+    # ── BVB Frauen logo ───────────────────────────────────────────────────────
+    st.markdown("""
+    <div style="background:#000;border-bottom:3px solid #ffd900;
+                padding:14px 12px 10px 12px;margin:-1rem -1rem 0 -1rem">
+    """, unsafe_allow_html=True)
+    if _LOGO_FRAUEN_B64:
+        st.markdown(
+            f'<img src="data:image/png;base64,{_LOGO_FRAUEN_B64}" '
+            f'style="max-height:72px;display:block;margin:0 auto 6px auto">',
+            unsafe_allow_html=True)
+    else:
+        st.markdown('<p style="color:#ffd900;font-weight:700;font-size:14px;'
+                    'text-align:center;margin:0">BVB FRAUEN</p>',
+                    unsafe_allow_html=True)
+    st.markdown(
+        '<p style="color:#555;font-size:9px;text-align:center;'
+        'letter-spacing:1px;margin:0">PERFORMANCE ANALYTICS</p>',
+        unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    # ── Session info ──────────────────────────────────────────────────────────
+    st.markdown(
+        '<p style="color:#444;font-size:9px;text-transform:uppercase;'
+        'letter-spacing:1px;margin:4px 0 6px 0">Aktive Sessions</p>',
+        unsafe_allow_html=True)
     st.divider()
 
     st.markdown("**Sessions**")
@@ -3023,7 +3466,12 @@ with st.sidebar:
             st.rerun()
 
     st.divider()
-    st.caption(f"v1.0 · {len(sessions)} Sessions · {len(players)} Spielerinnen")
+    st.markdown(
+        f'<p style="color:#333;font-size:9px;text-align:center;margin:2px 0">'
+        f'{len(sessions)} Sessions · {len(players)} Spielerinnen</p>'
+        f'<p style="color:#cc2200;font-size:8px;font-weight:700;text-align:center;'
+        f'letter-spacing:1px;margin:4px 0 2px 0">VERTRAULICH · INTERN</p>',
+        unsafe_allow_html=True)
     
     # Show Supabase fix reminder if RSI looks wrong
     if not df.empty and "dj_rsi" in df.columns:
@@ -3139,7 +3587,7 @@ with tab_overview:
                 f"<div style='background:#111;border:1px solid #222;border-radius:8px;"
                 f"padding:10px 12px'>"
                 f"<div style='font-size:10px;text-transform:uppercase;letter-spacing:1px;"
-                f"color:#FDE000;font-weight:700;margin-bottom:6px'>{grp}</div>"
+                f"color:#ffd900;font-weight:700;margin-bottom:6px'>{grp}</div>"
                 f"{rows_html}"
                 f"</div>",
                 unsafe_allow_html=True,
