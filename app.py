@@ -2677,7 +2677,6 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
                 p_rows.append(r_data)
 
         insights_p = auto_insights(df, last_p_sess, player)
-        recs_p     = training_recommendations(player, df, last_p_sess)
 
         block = [
             Paragraph(f"<b>{player}</b>", S["section"]),
@@ -2714,11 +2713,12 @@ def generate_team_pdf(df: pd.DataFrame) -> bytes:
             for ins in insights_p:
                 block.append(Paragraph(ins, S["insight"]))
 
-        if recs_p:
-            block.append(Spacer(1, 0.1 * cm))
-            block.append(Paragraph("<b>Trainingsempfehlungen</b>", S["sub"]))
-            for rec in recs_p:
-                block.append(Paragraph(rec, S["body"]))
+        # Trainingsempfehlungen temporarily hidden — will be customised per player
+        # if recs_p:
+        #     block.append(Spacer(1, 0.1 * cm))
+        #     block.append(Paragraph("<b>Trainingsempfehlungen</b>", S["sub"]))
+        #     for rec in recs_p:
+        #         block.append(Paragraph(rec, S["body"]))
 
         block.append(PageBreak())
         story.extend(block)
@@ -2907,11 +2907,7 @@ def generate_player_pdf(df: pd.DataFrame, player: str) -> bytes:
 
     story.append(Spacer(1, 0.2 * cm))
 
-    # ── TRAINING RECOMMENDATIONS ───────────────────────────────────────────
-    rl_section(story, "Trainingsempfehlungen", S)
-    recs = training_recommendations(player, df, last_p_sess)
-    for rec in recs:
-        story.append(Paragraph(rec, S["body"]))
+    # Trainingsempfehlungen temporarily hidden — will be customised per player
 
     doc.build(story,
               onFirstPage=make_footer_canvas(last_p_sess),
