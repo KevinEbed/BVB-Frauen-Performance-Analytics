@@ -3597,68 +3597,10 @@ h3 { font-size: 0.9rem !important;  font-weight: 600 !important; color: #d0d0d0 
 h4 { font-size: 0.82rem !important; font-weight: 500 !important; color: #999 !important; }
 h5,h6 { font-size: 0.78rem !important; font-weight: 400 !important; color: #777 !important; }
 
-/* ══ TABS — definitive override, all possible selectors ══════════════════════
-   Streamlit renders tab items as <button role="tab" data-baseweb="tab">.
-   We target by ARIA role, baseweb attribute, and element type simultaneously
-   so we win regardless of surrounding class names or specificity tricks.      */
-
-/* Tab list container */
-[data-baseweb="tab-list"],
-[data-testid="stTabs"] [data-baseweb="tab-list"] {
-    background: transparent !important;
-    border-bottom: 2px solid #1e1e1e !important;
-    padding: 0 !important;
-    gap: 0 !important;
-}
-
-/* Every tab item — inactive */
-[role="tab"],
-[data-baseweb="tab"],
-button[data-baseweb="tab"],
-div[data-baseweb="tab"],
-li[data-baseweb="tab"] {
-    color: #aaa !important;
-    background: transparent !important;
-    font-family: 'BVBCopyReg', 'Inter', -apple-system, sans-serif !important;
-    font-size: 12px !important;
-    font-weight: 400 !important;
-    text-transform: none !important;
-    letter-spacing: 0 !important;
-    padding: 10px 16px !important;
-    border-bottom: 2px solid transparent !important;
-    border-top: none !important;
-    border-left: none !important;
-    border-right: none !important;
-    border-radius: 0 !important;
-    outline: none !important;
-    opacity: 1 !important;
-    visibility: visible !important;
-    transition: color 0.12s, border-color 0.12s !important;
-}
-
-/* Active tab */
-[role="tab"][aria-selected="true"],
-[data-baseweb="tab"][aria-selected="true"],
-button[data-baseweb="tab"][aria-selected="true"] {
-    color: #ffd900 !important;
-    font-weight: 600 !important;
-    border-bottom: 2px solid #ffd900 !important;
-    background: transparent !important;
-}
-
-/* Hover */
-[role="tab"]:hover:not([aria-selected="true"]),
-[data-baseweb="tab"]:hover:not([aria-selected="true"]) {
-    color: #e0e0e0 !important;
-    background: rgba(255,217,0,0.04) !important;
-    border-bottom-color: #333 !important;
-}
-
-/* Tab panel content */
+/* ── Tab panel content ── */
 [data-testid="stTabsContent"],
-[data-baseweb="tab-panel"] {
-    padding-top: 1rem !important;
-}
+[data-baseweb="tab-panel"] { padding-top: 1rem !important; }
+[data-baseweb="tab-list"] { border-bottom: 1px solid #1e1e1e !important; }
 
 /* ── Selectbox / multiselect dropdown options ── */
 [data-baseweb="menu"] li,
@@ -3688,6 +3630,56 @@ button[data-baseweb="tab"][aria-selected="true"] {
 }
 [data-baseweb="tag"] span { color: #bbb !important; font-size: 11px !important; }
 </style>
+""", unsafe_allow_html=True)
+
+# ── Tab bar JavaScript styler ─────────────────────────────────────────────────
+# CSS alone cannot override Streamlit React inline styles. This script directly
+# mutates the DOM and re-applies via MutationObserver on every Streamlit rerender.
+st.markdown("""
+<script>
+(function() {
+    var INACTIVE = '#aaaaaa';
+    var ACTIVE   = '#ffd900';
+
+    function styleTabBar() {
+        document.querySelectorAll('[data-baseweb="tab-list"]').forEach(function(list) {
+            list.style.setProperty('background',    'transparent', 'important');
+            list.style.setProperty('border-bottom', '1px solid #252525', 'important');
+            list.style.setProperty('padding',       '0', 'important');
+        });
+        document.querySelectorAll('[role="tab"], [data-baseweb="tab"]').forEach(function(tab) {
+            var active = tab.getAttribute('aria-selected') === 'true';
+            tab.style.setProperty('color',          active ? ACTIVE : INACTIVE, 'important');
+            tab.style.setProperty('font-weight',    active ? '600' : '400', 'important');
+            tab.style.setProperty('border-bottom',  active ? '2px solid '+ACTIVE : '2px solid transparent', 'important');
+            tab.style.setProperty('border-top',     'none', 'important');
+            tab.style.setProperty('border-left',    'none', 'important');
+            tab.style.setProperty('border-right',   'none', 'important');
+            tab.style.setProperty('background',     'transparent', 'important');
+            tab.style.setProperty('font-size',      '12px', 'important');
+            tab.style.setProperty('text-transform', 'none', 'important');
+            tab.style.setProperty('opacity',        '1', 'important');
+            tab.style.setProperty('visibility',     'visible', 'important');
+            tab.style.setProperty('padding',        '9px 16px', 'important');
+        });
+    }
+
+    styleTabBar();
+    setTimeout(styleTabBar, 300);
+    setTimeout(styleTabBar, 800);
+
+    new MutationObserver(function(mutations) {
+        var relevant = mutations.some(function(m) {
+            return m.addedNodes.length > 0 ||
+                   (m.type === 'attributes' && m.attributeName === 'aria-selected');
+        });
+        if (relevant) { styleTabBar(); }
+    }).observe(document.body, {
+        childList: true, subtree: true,
+        attributes: true, attributeFilter: ['aria-selected']
+    });
+})();
+</script>
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
