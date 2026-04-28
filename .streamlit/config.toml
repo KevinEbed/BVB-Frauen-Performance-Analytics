@@ -1,0 +1,10 @@
+[theme]
+# Official BVB brand theme
+primaryColor      = "#ffd900"   # BVB Yellow — active tab underline, buttons, selectors
+backgroundColor   = "#050505"   # App background
+secondaryBackgroundColor = "#111111"  # Card / sidebar surface
+textColor         = "#e0e0e0"   # All text including tab labels
+
+[server]
+headless          = true
+enableCORS        = false

@@ -1178,14 +1178,14 @@ def comparison_bar(df: pd.DataFrame, name: str, session: str) -> go.Figure:
         hovertemplate=f"{name}: %{{x:.1f}}<extra></extra>",
     ))
     fig.add_vline(x=100, line_color="#444", line_dash="dash", line_width=1)
+    _layout = {**PLOTLY_LAYOUT, "margin": dict(l=130, r=20, t=40, b=20)}
     fig.update_layout(
-        **PLOTLY_LAYOUT,
+        **_layout,
         barmode="overlay",
         xaxis=dict(range=[70, 140], title="Z-Score (MW=100)",
                    tickfont=dict(color="#555", size=10), title_font=dict(size=11)),
         yaxis=dict(tickfont=dict(color="#aaa", size=11)),
         legend=dict(font=dict(color="#666", size=10), bgcolor="rgba(0,0,0,0)"),
-        margin=dict(l=130, r=20, t=40, b=20),
         height=300,
         title=dict(text=f"Vergleich mit Team Ø · {session}", font=dict(color="#ffd900", size=12)),
     )
