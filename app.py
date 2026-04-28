@@ -182,36 +182,7 @@ body, p, li, label, span, div {{
     font-size: 12px !important;
 }}
 
-/* ── TABS ─────────────────────────────────────────────────────────────────── */
-.stTabs [data-baseweb="tab-list"] {{
-    background: transparent !important;
-    border-bottom: 1px solid #252525 !important;
-    gap: 0 !important;
-    padding: 0 !important;
-}}
-.stTabs [data-baseweb="tab"] {{
-    color: #888 !important;
-    font-family: 'BVBClassic', 'Inter', sans-serif !important;
-    font-size: 12px !important;
-    font-weight: 400 !important;
-    letter-spacing: 0.2px !important;
-    text-transform: none !important;
-    padding: 9px 18px !important;
-    border-radius: 0 !important;
-    border-bottom: 2px solid transparent !important;
-    background: transparent !important;
-    transition: color 0.12s !important;
-}}
-.stTabs [aria-selected="true"] {{
-    color: #ffd900 !important;
-    border-bottom: 2px solid #ffd900 !important;
-    font-weight: 600 !important;
-    background: transparent !important;
-}}
-.stTabs [data-baseweb="tab"]:hover:not([aria-selected="true"]) {{
-    color: #ccc !important;
-    background: #0d0d0d !important;
-}}
+/* ── TABS — handled entirely in the late-cascade block below ──────────────── */
 [data-testid="stTabsContent"] {{ padding-top: 1rem !important; }}
 
 /* ── BUTTONS ──────────────────────────────────────────────────────────────── */
@@ -3626,23 +3597,67 @@ h3 { font-size: 0.9rem !important;  font-weight: 600 !important; color: #d0d0d0 
 h4 { font-size: 0.82rem !important; font-weight: 500 !important; color: #999 !important; }
 h5,h6 { font-size: 0.78rem !important; font-weight: 400 !important; color: #777 !important; }
 
-/* ── Tabs — brighter inactive, clear active ── */
-button[data-baseweb="tab"] {
-    color: #999 !important;
+/* ══ TABS — definitive override, all possible selectors ══════════════════════
+   Streamlit renders tab items as <button role="tab" data-baseweb="tab">.
+   We target by ARIA role, baseweb attribute, and element type simultaneously
+   so we win regardless of surrounding class names or specificity tricks.      */
+
+/* Tab list container */
+[data-baseweb="tab-list"],
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    background: transparent !important;
+    border-bottom: 2px solid #1e1e1e !important;
+    padding: 0 !important;
+    gap: 0 !important;
+}
+
+/* Every tab item — inactive */
+[role="tab"],
+[data-baseweb="tab"],
+button[data-baseweb="tab"],
+div[data-baseweb="tab"],
+li[data-baseweb="tab"] {
+    color: #aaa !important;
+    background: transparent !important;
+    font-family: 'BVBCopyReg', 'Inter', -apple-system, sans-serif !important;
     font-size: 12px !important;
     font-weight: 400 !important;
-    font-family: 'BVBCopyReg','Inter',sans-serif !important;
     text-transform: none !important;
     letter-spacing: 0 !important;
+    padding: 10px 16px !important;
+    border-bottom: 2px solid transparent !important;
+    border-top: none !important;
+    border-left: none !important;
+    border-right: none !important;
+    border-radius: 0 !important;
+    outline: none !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    transition: color 0.12s, border-color 0.12s !important;
 }
+
+/* Active tab */
+[role="tab"][aria-selected="true"],
+[data-baseweb="tab"][aria-selected="true"],
 button[data-baseweb="tab"][aria-selected="true"] {
     color: #ffd900 !important;
     font-weight: 600 !important;
     border-bottom: 2px solid #ffd900 !important;
+    background: transparent !important;
 }
-button[data-baseweb="tab"]:hover {
-    color: #ddd !important;
-    background: rgba(255,255,255,0.04) !important;
+
+/* Hover */
+[role="tab"]:hover:not([aria-selected="true"]),
+[data-baseweb="tab"]:hover:not([aria-selected="true"]) {
+    color: #e0e0e0 !important;
+    background: rgba(255,217,0,0.04) !important;
+    border-bottom-color: #333 !important;
+}
+
+/* Tab panel content */
+[data-testid="stTabsContent"],
+[data-baseweb="tab-panel"] {
+    padding-top: 1rem !important;
 }
 
 /* ── Selectbox / multiselect dropdown options ── */
