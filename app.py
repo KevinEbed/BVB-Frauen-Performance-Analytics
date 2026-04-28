@@ -109,9 +109,9 @@ _BVB_CSS = f"""
     padding-right: 2.5rem !important;
 }}
 
-/* ── BASE TEXT ────────────────────────────────────────────────────────────── */
-body, p, li {{
-    font-family: 'BVBClassic', 'Inter', -apple-system, sans-serif;
+/* ── BASE TEXT — use Copy (readable text font), NOT Classic (all-caps headline) */
+body, p, li, label, span, div {{
+    font-family: 'BVBCopyReg', 'Inter', -apple-system, sans-serif;
     font-size: 13px;
 }}
 
@@ -3588,6 +3588,93 @@ with st.sidebar:
                 "WHERE dvj_kontaktzeit IS NOT NULL AND dvj_hoehe IS NOT NULL;\n```"
             )
 
+# ── Heading helpers — inline styles beat any stylesheet, guaranteed sizing ───
+def _h2(text: str) -> None:
+    """Section heading: yellow, ~1rem, normal-case, bold."""
+    st.markdown(
+        f'<p style="font-size:1rem;font-weight:700;color:#ffd900;'
+        f'margin:14px 0 4px 0;line-height:1.25;letter-spacing:0">{text}</p>',
+        unsafe_allow_html=True)
+
+def _h3(text: str) -> None:
+    """Sub-section heading: light grey, 0.9rem, normal-case."""
+    st.markdown(
+        f'<p style="font-size:0.9rem;font-weight:600;color:#d0d0d0;'
+        f'margin:10px 0 3px 0;line-height:1.25;letter-spacing:0">{text}</p>',
+        unsafe_allow_html=True)
+
+def _h4(text: str) -> None:
+    """Minor heading: muted, 0.82rem, normal-case."""
+    st.markdown(
+        f'<p style="font-size:0.82rem;font-weight:500;color:#999;'
+        f'margin:8px 0 2px 0;line-height:1.25;letter-spacing:0">{text}</p>',
+        unsafe_allow_html=True)
+
+# Late-cascade style override — this block is injected AFTER Streamlit's own CSS
+# so it wins even when specificity is tied. Fixes fonts and tabs definitively.
+st.markdown("""
+<style>
+/* ── Heading sizes & font — injected last, wins the cascade ── */
+h1,h2,h3,h4,h5,h6 {
+    font-family: 'BVBCopyReg','Inter',-apple-system,sans-serif !important;
+    text-transform: none !important;
+    letter-spacing: 0 !important;
+}
+h1 { font-size: 1.3rem !important;  font-weight: 700 !important; color: #ffd900 !important; }
+h2 { font-size: 1.05rem !important; font-weight: 600 !important; color: #ffd900 !important; }
+h3 { font-size: 0.9rem !important;  font-weight: 600 !important; color: #d0d0d0 !important; }
+h4 { font-size: 0.82rem !important; font-weight: 500 !important; color: #999 !important; }
+h5,h6 { font-size: 0.78rem !important; font-weight: 400 !important; color: #777 !important; }
+
+/* ── Tabs — brighter inactive, clear active ── */
+button[data-baseweb="tab"] {
+    color: #999 !important;
+    font-size: 12px !important;
+    font-weight: 400 !important;
+    font-family: 'BVBCopyReg','Inter',sans-serif !important;
+    text-transform: none !important;
+    letter-spacing: 0 !important;
+}
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: #ffd900 !important;
+    font-weight: 600 !important;
+    border-bottom: 2px solid #ffd900 !important;
+}
+button[data-baseweb="tab"]:hover {
+    color: #ddd !important;
+    background: rgba(255,255,255,0.04) !important;
+}
+
+/* ── Selectbox / multiselect dropdown options ── */
+[data-baseweb="menu"] li,
+[data-baseweb="menu"] [role="option"],
+[data-baseweb="list"] li {
+    background: #111 !important;
+    color: #ccc !important;
+    font-size: 12px !important;
+}
+[data-baseweb="menu"] [role="option"]:hover,
+[data-baseweb="menu"] [aria-selected="true"] {
+    background: #1e1e1e !important;
+    color: #ffd900 !important;
+}
+/* Selectbox control (the closed box) */
+[data-baseweb="select"] [data-baseweb="select-control"],
+[data-baseweb="select"] > div:first-child {
+    background: #0f0f0f !important;
+    border-color: #282828 !important;
+}
+/* Multiselect tags */
+[data-baseweb="tag"] {
+    background: #1a1a1a !important;
+    border: 1px solid #2a2a2a !important;
+    color: #bbb !important;
+    font-size: 11px !important;
+}
+[data-baseweb="tag"] span { color: #bbb !important; font-size: 11px !important; }
+</style>
+""", unsafe_allow_html=True)
+
 # ─────────────────────────────────────────────
 # MAIN TABS
 # ─────────────────────────────────────────────
@@ -3718,7 +3805,7 @@ with tab_overview:
     with col1:
         st.plotly_chart(team_radar_chart(df), width="stretch", key="team_radar")
     with col2:
-        st.markdown("#### Meistverbesserte")
+        _h4("Meistverbesserte")
         if prev_sess:
             improved = []
             for name in players:
@@ -3748,7 +3835,7 @@ with tab_overview:
     st.divider()
     col3, col4 = st.columns(2)
     with col3:
-        st.markdown("#### Team Entwicklung")
+        _h4("Team Entwicklung")
         if prev_sess:
             trend_metrics = ["cmj", "dj_rsi", "t5", "t20", "agility", "dribbling", "vo2max"]
             trend_labels  = ["CMJ", "DJ RSI", "t5", "t20", "Agility", "Dribbling", "VO2max"]
@@ -3777,7 +3864,7 @@ with tab_overview:
             st.info("Zwei Sessions benötigt.")
 
     with col4:
-        st.markdown("#### Athletenprofile")
+        _h4("Athletenprofile")
         clusters = compute_clusters(df, last_sess)
         if not clusters.empty:
             for arch in clusters["archetype"].unique():
@@ -3806,7 +3893,7 @@ with tab_player:
 
             col_head, col_btn = st.columns([4, 1])
             with col_head:
-                st.markdown(f"### {selected_player}")
+                _h2(selected_player)
                 st.caption(f"Session: {selected_session} · Sessions gesamt: {', '.join(sessions)}")
                 if not cl.empty:
                     arch = cl.iloc[0]["archetype"]
@@ -3875,7 +3962,7 @@ with tab_player:
             # ── Sprint Phase Breakdown (inline in player tab) ───────────
             if any(pd.notna(rec.get(c)) for c in ["t5", "t10", "t20", "t30"]):
                 st.divider()
-                st.markdown("#### 🏃 Sprint Phase Breakdown")
+                _h4("Sprint Phase Breakdown")
                 _sp_phases     = sprint_phases(rec)
                 _sp_sess_df    = df[df["session"] == selected_session]
                 _sp_team_ph    = _team_phases_from_df(_sp_sess_df)
@@ -3922,7 +4009,7 @@ with tab_player:
 
             c3, c4 = st.columns(2)
             with c3:
-                st.markdown("#### Rohdaten + Score")
+                _h4("Rohdaten + Score")
                 raw_rows = []
                 for metric, info in RAW_METRICS.items():
                     row = {"Metrik": info["label"], "Einheit": info["unit"]}
@@ -3939,7 +4026,7 @@ with tab_player:
                 st.dataframe(raw_df, use_container_width=True)
 
             with c4:
-                st.markdown("#### Auswertung")
+                _h4("Auswertung")
                 co = generate_commentary(df, selected_player)
                 if co.get("overall"):
                     st.info(co["overall"])
@@ -3953,7 +4040,7 @@ with tab_player:
                 else:
                     st.success(ir)
 
-            st.markdown("#### Prognose nächste Session")
+            _h4("Prognose nächste Session")
             preds = predict_next(df, selected_player)
             pred_rows = []
             for metric, info in RAW_METRICS.items():
@@ -3980,7 +4067,7 @@ with tab_player:
 # VERGLEICH
 # ══════════════════════════════════════════════
 with tab_compare:
-    st.markdown("### Spielerinnen vergleichen")
+    _h2("Spielerinnen vergleichen")
     col_sel1, col_sel2 = st.columns([3, 1])
     with col_sel1:
         selected_players = st.multiselect(
@@ -4025,7 +4112,7 @@ with tab_compare:
             else:
                 st.info(f"Keine {RAW_METRICS[cmp_metric]['label']}-Daten für die gewählten Spielerinnen.")
 
-        st.markdown("#### Detaillierter Vergleich")
+        _h4("Detaillierter Vergleich")
         rows = []
         for metric, info in RAW_METRICS.items():
             row = {"Metrik": info["label"]}
@@ -4044,7 +4131,7 @@ with tab_compare:
         st.dataframe(det_df, use_container_width=True)
 
         if len(sessions) > 1:
-            st.markdown("#### Zeitverlauf")
+            _h4("Zeitverlauf")
             tl_metric = st.selectbox("Metrik", list(RAW_METRICS.keys()),
                                      format_func=lambda x: RAW_METRICS[x]["label"],
                                      key="tl_met")
@@ -4113,7 +4200,7 @@ with tab_ranking:
 # SÄULENDIAGRAMME
 # ══════════════════════════════════════════════
 with tab_saeulen:
-    st.markdown("### Säulendiagramme — Ranked Bar Charts")
+    _h2("Säulendiagramme — Ranked Bar Charts")
     st.caption("Spielerinnen sortiert nach bestem Wert in der neuesten Session. Horizontale Linien = Mannschaftsmittelwert.")
 
     col_s1, col_s2 = st.columns([2, 1])
@@ -4142,7 +4229,7 @@ with tab_saeulen:
             st.plotly_chart(_main_fig, width="stretch", key=f"saeul_main_{saeulen_metric}")
 
         st.divider()
-        st.markdown("#### Alle Metriken auf einen Blick")
+        _h4("Alle Metriken auf einen Blick")
         st.caption("Klicke eine Metrik an um den vollständigen Chart zu sehen.")
 
         # Grid of mini charts — 2 per row
@@ -4175,7 +4262,7 @@ with tab_saeulen:
 # VERLETZUNGSRISIKO
 # ══════════════════════════════════════════════
 with tab_flags:
-    st.markdown("### Verletzungsrisiko · Leistungsabfälle")
+    _h2("Verletzungsrisiko · Leistungsabfälle")
     if not prev_sess:
         st.info("Zwei Sessions erforderlich für Vergleich.")
     else:
@@ -4194,7 +4281,7 @@ with tab_flags:
                         st.success(f"↑ Verbesserungen: {gains_str}")
 
         st.divider()
-        st.markdown("#### Δ Z-Score Heatmap")
+        _h4("Δ Z-Score Heatmap")
         hm_rows = []
         for name in players:
             j = df[(df["name"] == name) & (df["session"] == prev_sess)]
@@ -4222,10 +4309,10 @@ with tab_flags:
 # PDF REPORTS
 # ══════════════════════════════════════════════
 with tab_pdf:
-    st.markdown("### 📄 PDF Reports")
+    _h2("PDF Reports")
 
     # ── FULL TEAM REPORT ──────────────────────────────────────────────
-    st.markdown("#### Mannschaftsbericht")
+    _h4("Mannschaftsbericht")
     st.caption(
         "Vollständiger Bericht im Format der Auswertung Leistungsdiagnostik: "
         "Übersicht je Session · Ranglisten je Disziplin · Individuelle Profile aller Spielerinnen."
@@ -4249,7 +4336,7 @@ with tab_pdf:
     st.divider()
 
     # ── INDIVIDUAL PLAYER REPORTS ─────────────────────────────────────
-    st.markdown("#### Individuelle Spielerinnen-Reports")
+    _h4("Individuelle Spielerinnen-Reports")
     st.caption("Einzelbericht pro Spielerin mit vollständiger Messhistorie.")
 
     col_dl, col_all = st.columns([2, 1])
@@ -4278,7 +4365,7 @@ with tab_pdf:
     st.divider()
 
     # ── ALL PLAYERS AS ZIP ────────────────────────────────────────────
-    st.markdown("#### Alle Spielerinnen als ZIP")
+    _h4("Alle Spielerinnen als ZIP")
     st.caption("Generiert für jede Spielerin eine eigene PDF-Datei und packt sie in ein ZIP.")
 
     if st.button("📦 Alle Spielerinnen-PDFs als ZIP", key="gen_zip"):
@@ -4312,12 +4399,12 @@ with tab_pdf:
 # SPIELERINNEN MANAGEMENT
 # ══════════════════════════════════════════════
 with tab_squad:
-    st.markdown("### Spielerinnen verwalten")
+    _h2("Spielerinnen verwalten")
     st.caption("Kader ändert sich automatisch — neue Spielerinnen erscheinen nach dem ersten Upload, "
                "ehemalige werden hier entfernt.")
 
     # ── Current squad overview ──────────────────
-    st.markdown("#### Aktueller Kader")
+    _h4("Aktueller Kader")
 
     # Build per-player session summary
     squad_rows = []
@@ -4346,7 +4433,7 @@ with tab_squad:
 
     # ── Rename player ───────────────────────────
     with col_a:
-        st.markdown("#### Spielerin umbenennen")
+        _h4("Spielerin umbenennen")
         st.caption("Z.B. bei Heirat, Tippfehler im Namen oder Spitzname im Excel")
         rename_from = st.selectbox("Spielerin", ["— auswählen —"] + players, key="rename_from")
         rename_to   = st.text_input("Neuer Name", key="rename_to",
@@ -4376,7 +4463,7 @@ with tab_squad:
     st.divider()
 
     # ── DB maintenance ──────────────────────────
-    st.markdown("#### Datenbank-Wartung")
+    _h4("Datenbank-Wartung")
     col_c, col_d = st.columns(2)
 
     with col_c:
@@ -4403,7 +4490,7 @@ with tab_squad:
 # SPRINT ANALYSE
 # ══════════════════════════════════════════════
 with tab_sprint:
-    st.markdown("### 🏃 Sprint Phase Breakdown")
+    _h2("Sprint Phase Breakdown")
     st.caption("Analyse der Sprintphasen: 0–5m · 5–10m · 10–20m · 20–30m  |  Sprint-Kurve & Phasenzeiten vs Team und bester Spielerin")
 
     col_sp1, col_sp2 = st.columns([2, 1])
@@ -4426,7 +4513,7 @@ with tab_sprint:
         sp_phases   = sprint_phases(sp_row)
 
         # ── Phase KPI cards ─────────────────────────────────────────────
-        st.markdown("#### Phasenzeiten")
+        _h4("Phasenzeiten")
         ph_cols = st.columns(4)
         for ci, (lbl, end_col, start_col, dist) in enumerate(SPRINT_PHASE_DEFS):
             with ph_cols[ci]:
@@ -4464,7 +4551,7 @@ with tab_sprint:
             )
 
         # ── Auto insights ────────────────────────────────────────────────
-        st.markdown("#### Auto-Insights")
+        _h4("Auto-Insights")
         for ins in sprint_phase_insights(sp_phases, sp_team_ph):
             if ins.startswith("✦"):
                 st.success(ins)
@@ -4474,7 +4561,7 @@ with tab_sprint:
         st.divider()
 
         # ── Team Rankings by Phase ───────────────────────────────────────
-        st.markdown("### Team Sprint Rankings")
+        _h3("Team Sprint Rankings")
         st.caption(f"Session: **{sprint_session}**  ·  Grün = Schnellste · Rot = Langsamste · Linie = Team Ø")
 
         phase_figs = sprint_phase_rankings_plotly(df, sprint_session)
